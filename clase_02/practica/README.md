@@ -12,6 +12,9 @@ Este repositorio prepara un entorno local para una práctica de Bases de Datos p
 docker compose up -d
 ```
 
+Docker compose se baja las imagenes de Dockerhub: [pgadmin4](https://hub.docker.com/r/dpage/pgadmin4) & [postgres](https://hub.docker.com/_/postgres)
+
+
 4. Entrá a pgAdmin en <http://localhost:8080>.
 5. Conectate al servidor PostgreSQL usando el host `postgres`.
    - Register server
