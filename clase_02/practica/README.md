@@ -14,6 +14,16 @@ docker compose up -d
 
 4. Entrá a pgAdmin en <http://localhost:8080>.
 5. Conectate al servidor PostgreSQL usando el host `postgres`.
+   - Register server
+   - Connection tab
+      - host: postgres
+      - port: POSTGRES_LISTEN_PORT
+      - Maintenance database: POSTGRES_DB
+      - Username: POSTGRES_USER
+      - Password: POSTGRES_PASSWORD
+
+-> Usar las credenciales dentro de `.env` <-
+
 6. Ejecutá los scripts de la carpeta `sql/` desde **Query Tool**.
 
 ## Objetivo de la práctica
