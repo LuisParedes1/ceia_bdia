@@ -1,0 +1,11 @@
+[
+  {"_id":"mod-001","origen_id":1,"nombre":"Clasificador de lluvia","tipo":"Clasificación","version":"v1","propietario":{"usuario_id":1,"nombre":"Ana Pérez","email":"ana@example.com"}},
+  {"_id":"mod-002","origen_id":2,"nombre":"Detector de cultivos","tipo":"Visión computacional","version":"v1","propietario":{"usuario_id":1,"nombre":"Ana Pérez","email":"ana@example.com"}},
+  {"_id":"mod-003","origen_id":3,"nombre":"Predicción de demanda","tipo":"Regresión","version":"v1","propietario":{"usuario_id":2,"nombre":"Luis Gómez","email":"luis@example.com"}},
+  {"_id":"mod-004","origen_id":4,"nombre":"Análisis de sentimiento","tipo":"Clasificación","version":"v1","propietario":{"usuario_id":3,"nombre":"María Torres","email":"maria@example.com"}},
+  {"_id":"mod-005","origen_id":5,"nombre":"Clasificador industrial","tipo":"Clasificación","version":"v1","propietario":{"usuario_id":4,"nombre":"Carla Ruiz","email":"carla@example.com"}},
+  {"_id":"mod-006","origen_id":6,"nombre":"Detector de fraude","tipo":"Clasificación","version":"v2","propietario":{"usuario_id":5,"nombre":"Diego Fernández","email":"diego@example.com"}},
+  {"_id":"mod-007","origen_id":7,"nombre":"Segmentador de clientes","tipo":"Clustering","version":"v1","propietario":{"usuario_id":5,"nombre":"Diego Fernández","email":"diego@example.com"}},
+  {"_id":"mod-008","origen_id":8,"nombre":"Clasificador de tickets","tipo":"Clasificación","version":"v1","propietario":{"usuario_id":6,"nombre":"Sofía Herrera","email":"sofia@example.com"}},
+  {"_id":"mod-009","origen_id":9,"nombre":"Pronóstico climático","tipo":"Regresión","version":"v2","propietario":{"usuario_id":1,"nombre":"Ana Pérez","email":"ana@example.com"}}
+]

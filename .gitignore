@@ -33,3 +33,6 @@ temp/
 
 # Archivos generados opcionales
 exports/
+
+# Material de desarrollo de las clases
+material_desarrollo/
