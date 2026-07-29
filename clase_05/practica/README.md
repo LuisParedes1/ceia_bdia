@@ -89,7 +89,7 @@ calidad/rechazos/datos.parquet
 calidad/resumen/datos.parquet
 ```
 
-En pgAdmin registrá un servidor con host `postgres-warehouse`, puerto `5432`, base `bdia_dw`, usuario `bdia_user` y la contraseña definida en `.env`. Abrí `consultas.sql` desde el almacenamiento del usuario o copiá `postgres/02_consultas_olap_y_calidad.sql` en Query Tool.
+En pgAdmin registrá un servidor con host `postgres-warehouse`, puerto `5432`, base `bdia_dw`, usuario `bdia_user` y la contraseña definida en `.env`. Compose monta `./postgres` en el home del usuario de pgAdmin: en Query Tool, `File → Open File...` abre ahí directamente y `02_consultas_olap_y_calidad.sql` está a la vista.
 
 ## Detener o reiniciar
 

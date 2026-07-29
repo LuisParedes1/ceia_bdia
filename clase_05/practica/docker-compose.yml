@@ -98,7 +98,7 @@ services:
       - "127.0.0.1:${PGADMIN_PORT}:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-      - ./postgres/02_consultas_olap_y_calidad.sql:/var/lib/pgadmin/storage/admin_bdia.com/consultas.sql:ro
+      - ./postgres:/home/pgadmin/postgres:ro
     depends_on:
       postgres-warehouse:
         condition: service_healthy

@@ -139,8 +139,6 @@ El último resultado de `05_verificar_calidad.sql` debe ser `CONTROLES_OK`.
 
 `clase_05.duckdb` vive en `./duckdb_data`, una carpeta del host montada como bind mount en `/workspace` dentro de `duckdb-transformer`. Esto permite abrir la UI oficial de DuckDB **directamente desde tu máquina**, sin pasar por la red de Docker.
 
-> **Por qué no se hace desde el contenedor:** la UI oficial de DuckDB sólo escucha en loopback y no admite bind a `0.0.0.0`. Para publicarla igual habría que interponer un proxy TCP entre el contenedor y el host, y ese salto adicional es justamente lo que dispara `Failed to resolve app state` / `RangeError: Offset is outside the bounds of the DataView` en el navegador — un problema conocido y todavía abierto de `duckdb-ui` ([duckdb/duckdb-ui#22](https://github.com/duckdb/duckdb-ui/issues/22), [#110](https://github.com/duckdb/duckdb-ui/issues/110)), independiente del sistema operativo. Abriendo la UI en un proceso `duckdb` nativo del host se evita ese salto por completo.
-
 Instalar el CLI de DuckDB una única vez (binario portable, sin dependencias, disponible para Windows, macOS y Linux): seguir <https://duckdb.org/install>.
 
 **Dónde ejecutarlo:** terminal en tu máquina (no `docker compose exec`), desde `clase_05/practica`.
@@ -204,7 +202,7 @@ Tu proceso `duckdb` local mantiene abierto `duckdb_data/clase_05.duckdb`. Para s
 docker compose exec -T duckdb-transformer sh /scripts/ejecutar_sql.sh /sql/03_publicar_silver.sql
 ```
 
-Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+C` (o ejecutar `.exit`).
+Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+D` (o ejecutar `.exit`).
 
 A diferencia de los pasos manuales, el pipeline automatizado (paso 12) no puede cerrar por vos esa UI: corre en tu máquina, fuera del contenedor. Si sigue abierta, `ejecutar_pipeline.sh` falla en el primer paso DuckDB con el mismo error de lock; cerrala manualmente y volvé a ejecutarlo.
 
@@ -271,7 +269,7 @@ Registrar el servidor:
 | Username | `bdia_user` |
 | Password | valor de `POSTGRES_PASSWORD` |
 
-Dentro de la red Docker el host es `postgres-warehouse`; `localhost:5433` se usa solamente desde una herramienta externa. Abrir Query Tool y ejecutar `postgres/02_consultas_olap_y_calidad.sql`. Las tres consultas de integridad finales deben devolver cero.
+Dentro de la red Docker el host es `postgres-warehouse`; `localhost:5433` se usa solamente desde una herramienta externa. Abrir Query Tool, `File → Open File...`: el diálogo abre directamente en la carpeta `postgres/` (Compose la monta en el home del usuario de pgAdmin) con los tres scripts. Abrir `02_consultas_olap_y_calidad.sql` y ejecutarlo completo: las tres consultas de integridad finales deben devolver cero.
 
 > Los CSV representan la extracción desde una fuente operacional orientada al registro de transacciones. Gold representa el consumo analítico: integra dimensiones y hechos para consultas OLAP sin operar sobre el origen.
 
