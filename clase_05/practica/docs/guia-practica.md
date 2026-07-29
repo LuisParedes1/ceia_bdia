@@ -141,6 +141,10 @@ El último resultado de `05_verificar_calidad.sql` debe ser `CONTROLES_OK`.
 
 Instalar el CLI de DuckDB una única vez (binario portable, sin dependencias, disponible para Windows, macOS y Linux): seguir <https://duckdb.org/install>.
 
+```bash
+curl https://install.duckdb.org | sh
+```
+
 **Dónde ejecutarlo:** terminal en tu máquina (no `docker compose exec`), desde `clase_05/practica`.
 
 ```bash
@@ -196,13 +200,9 @@ Las consultas se ejecutan localmente en el proceso nativo de DuckDB que abriste 
 
 Tu proceso `duckdb` local mantiene abierto `duckdb_data/clase_05.duckdb`. Para separar claramente inspección y escritura, cualquier paso manual del contenedor falla mientras ese archivo sigue abierto en tu terminal. Comprobarlo intentando continuar sin cerrarlo: debe devolver un error no nulo (DuckDB rechaza el lock del archivo) y no modificar datos.
 
+> Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+D` (o ejecutar `.exit`).
+
 **Dónde ejecutarlo:** terminal, desde `clase_05/practica`.
-
-```bash
-docker compose exec -T duckdb-transformer sh /scripts/ejecutar_sql.sh /sql/03_publicar_silver.sql
-```
-
-Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+D` (o ejecutar `.exit`).
 
 A diferencia de los pasos manuales, el pipeline automatizado (paso 12) no puede cerrar por vos esa UI: corre en tu máquina, fuera del contenedor. Si sigue abierta, `ejecutar_pipeline.sh` falla en el primer paso DuckDB con el mismo error de lock; cerrala manualmente y volvé a ejecutarlo.
 
@@ -269,7 +269,7 @@ Registrar el servidor:
 | Username | `bdia_user` |
 | Password | valor de `POSTGRES_PASSWORD` |
 
-Dentro de la red Docker el host es `postgres-warehouse`; `localhost:5433` se usa solamente desde una herramienta externa. Abrir Query Tool, `File → Open File...`: el diálogo abre directamente en la carpeta `postgres/` (Compose la monta en el home del usuario de pgAdmin) con los tres scripts. Abrir `02_consultas_olap_y_calidad.sql` y ejecutarlo completo: las tres consultas de integridad finales deben devolver cero.
+Dentro de la red Docker el host es `postgres-warehouse`; `localhost:5432` se usa solamente desde una herramienta externa. Abrir Query Tool, `File → Open File...`: el diálogo abre directamente en la carpeta `postgres/` (Compose la monta en el home del usuario de pgAdmin) con los tres scripts. Abrir `02_consultas_olap_y_calidad.sql` y ejecutarlo completo: las tres consultas de integridad finales deben devolver cero.
 
 > Los CSV representan la extracción desde una fuente operacional orientada al registro de transacciones. Gold representa el consumo analítico: integra dimensiones y hechos para consultas OLAP sin operar sobre el origen.
 
