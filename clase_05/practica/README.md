@@ -42,6 +42,7 @@ Todos los puertos publicados se vinculan solamente a `127.0.0.1`. Las credencial
 data/lote_01_inicial/       snapshot canónico de Clase 4
 data/lote_02_nuevos/        altas válidas y errores controlados
 duckdb/01..05               perfilado, Silver, publicación, Gold y controles
+duckdb_data/                bind mount con clase_05.duckdb (generado, no versionado)
 postgres/01..03             DDL, consultas OLAP y verificación
 scripts/                    carga, ejecución y reinicio determinista
 docs/guia-practica.md       recorrido paso a paso

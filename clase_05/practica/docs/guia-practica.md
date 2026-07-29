@@ -206,7 +206,7 @@ docker compose exec -T duckdb-transformer sh /scripts/ejecutar_sql.sh /sql/03_pu
 
 Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+C` (o ejecutar `.exit`).
 
-Repetir el comando de detención es seguro. El pipeline automatizado también detiene la UI al comenzar para garantizar un reproceso determinista.
+A diferencia de los pasos manuales, el pipeline automatizado (paso 12) no puede cerrar por vos esa UI: corre en tu máquina, fuera del contenedor. Si sigue abierta, `ejecutar_pipeline.sh` falla en el primer paso DuckDB con el mismo error de lock; cerrala manualmente y volvé a ejecutarlo.
 
 ## 7. Publicar Silver y calidad en MinIO
 
