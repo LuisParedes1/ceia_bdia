@@ -74,11 +74,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      DUCKDB_UI_PORT: ${DUCKDB_UI_PORT:-4213}
-    ports:
-      - "127.0.0.1:${DUCKDB_UI_PORT:-4213}:4214"
     volumes:
-      - duckdb_data:/workspace
+      - ./duckdb_data:/workspace
       - ./duckdb:/sql:ro
       - ./scripts:/scripts:ro
     depends_on:
@@ -110,7 +107,6 @@ services:
 volumes:
   minio_data:
   postgres_data:
-  duckdb_data:
   pgadmin_data:
 
 networks:

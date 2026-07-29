@@ -4,14 +4,14 @@
 # Produce / modifica: levanta la pila y reconstruye salidas Silver, calidad y Gold.
 # Resultado esperado: 32 hechos, 11 filas puente; lotes con balances 84/0 y 9/16.
 # Guía: automatización y recuperación; la primera enseñanza debe ejecutar los pasos manuales.
-# Seguridad: detiene primero la UI, limpia derivados y hace full reload de Gold.
+# Seguridad: requiere que la UI local del estudiante esté cerrada; limpia derivados y hace full reload de Gold.
 set -eu
 
 # Frontera 1, infraestructura y entrada: servicios saludables y ambos lotes Bronze completos.
+# La UI ahora corre como proceso `duckdb` en la máquina del estudiante, fuera de este stack:
+# cerrala vos (Ctrl+C en su terminal) antes de reprocesar; si sigue abierta, DuckDB rechaza
+# el lock del archivo y este comando falla con ese motivo.
 docker compose up -d --wait
-# La automatización resuelve la exclusión de escritores sin intervención; los pasos manuales,
-# en cambio, fallan y obligan a reconocer explícitamente la frontera entre inspección y escritura.
-docker compose exec -T duckdb-transformer sh /scripts/detener_duckdb_ui.sh
 docker compose exec -T minio-admin sh /scripts/cargar_bronze.sh lote_01_inicial
 docker compose exec -T minio-admin sh /scripts/cargar_bronze.sh lote_02_nuevos
 # Frontera 2, diagnóstico y transformación: perfila antes de limpiar sólo salidas derivadas.

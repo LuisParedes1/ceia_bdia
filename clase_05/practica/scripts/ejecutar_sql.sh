@@ -4,20 +4,13 @@
 # Produce / modifica: clase_05.duckdb y, para la carga Gold, el Warehouse PostgreSQL.
 # Resultado esperado: script ejecutado con acceso a MinIO y estado DuckDB persistente.
 # Guía: andamiaje compartido por pasos manuales y por la automatización del pipeline.
-# Seguridad: rechaza toda ejecución mientras la UI posee la conexión a la base.
+# Seguridad: si la UI local del estudiante tiene la base abierta, DuckDB rechaza el lock.
+# Nota: el contenedor escribe como root; /workspace queda world-writable para que el CLI
+# local del estudiante (otro usuario/UID del host) pueda abrir el mismo archivo sin sudo.
 set -eu
 
 archivo="${1:?Uso: ejecutar_sql.sh /sql/NN_archivo.sql}"
 base="/workspace/clase_05.duckdb"
-
-# Separar inspección y transformación hace visible la exclusión entre procesos de DuckDB:
-# el estudiante debe cerrar la UI antes de continuar con cualquier paso manual.
-. /scripts/_duckdb_ui.sh
-if duckdb_ui_activa; then
-  echo "No se puede ejecutar $archivo mientras DuckDB UI está activa." >&2
-  echo "Detenela con: docker compose exec -T duckdb-transformer sh /scripts/detener_duckdb_ui.sh" >&2
-  exit 1
-fi
 
 # La base persistente comparte las tablas entre pasos. httpfs y el secret S3 habilitan MinIO
 # sin repetir credenciales ni configuración de transporte en cada archivo didáctico.
@@ -43,3 +36,5 @@ ATTACH 'host=postgres-warehouse port=5432 dbname=$POSTGRES_DB user=$POSTGRES_USE
 esac
 
 duckdb "$base" -c "$configuracion" -c ".read $archivo"
+chmod 0777 /workspace
+chmod 0666 "$base"

@@ -4,7 +4,7 @@ Práctica de infraestructura de datos sobre el caso de experimentos de IA de las
 
 ## Ruta rápida
 
-Requisitos: Docker Engine o Docker Desktop con Docker Compose y puertos locales `4213`, `5433`, `8085`, `9000` y `9001` disponibles.
+Requisitos: Docker Engine o Docker Desktop con Docker Compose, puertos locales `5433`, `8085`, `9000` y `9001` disponibles, y el CLI de [DuckDB](https://duckdb.org/install) instalado (para el paso de inspección gráfica, puerto `4213` local).
 
 Desde `clase_05/practica`:
 
@@ -30,7 +30,7 @@ El comando se puede repetir: Bronze no se sobrescribe, Silver se vuelve a genera
 | --- | --- | --- |
 | MinIO (`minio-storage`) | Bronze CSV inmutable, Silver Parquet y evidencia de calidad | API `localhost:9000`; consola <http://localhost:9001> |
 | MinIO Client (`minio-admin`) | Administración de objetos y ejecución de cargas | Sólo dentro de la red Compose |
-| DuckDB (`duckdb-transformer`) | Perfilado, staging text-first, reglas, UI local, Parquet y transferencia | Base `/workspace/clase_05.duckdb`; UI <http://127.0.0.1:4213> |
+| DuckDB (`duckdb-transformer`) | Perfilado, staging text-first, reglas, Parquet y transferencia | Base en `./duckdb_data/clase_05.duckdb` (bind mount), `/workspace` dentro del contenedor |
 | PostgreSQL (`postgres-warehouse`) | Warehouse dimensional Gold y control de cargas | `localhost:5433` |
 | pgAdmin (`pgadmin-warehouse`) | Inspección visual y consultas OLAP | <http://localhost:8085> |
 
@@ -55,14 +55,20 @@ El grano de `gold.fact_metricas_experimentos` es **una métrica registrada para 
 
 ## Inspección
 
-Después de ejecutar `02_procesar_silver.sql` y `05_verificar_calidad.sql`, iniciá la UI oficial de DuckDB:
+Después de ejecutar `02_procesar_silver.sql` y `05_verificar_calidad.sql`, abrí la UI oficial de DuckDB **desde tu máquina**, no desde el contenedor: la UI sólo escucha en loopback y exponerla vía proxy dispara un bug conocido de `duckdb-ui` (`Failed to resolve app state`), sin importar el sistema operativo. Requiere el CLI de [DuckDB](https://duckdb.org/install) instalado localmente.
 
 ```bash
-docker compose exec -T duckdb-transformer sh /scripts/iniciar_duckdb_ui.sh
-docker compose exec -T duckdb-transformer sh /scripts/estado_duckdb_ui.sh
+duckdb duckdb_data/clase_05.duckdb
 ```
 
-Abrí <http://127.0.0.1:4213> y recorré las tablas `raw_*`, `evaluados_*`, `silver_*`, `rechazos` y `resumen_calidad`. Por ejemplo:
+Dentro del prompt:
+
+```sql
+LOAD ui;
+CALL start_ui_server();
+```
+
+Abrí <http://localhost:4213> y recorré las tablas `raw_*`, `evaluados_*`, `silver_*`, `rechazos` y `resumen_calidad`. Por ejemplo:
 
 ```sql
 SELECT * FROM resumen_calidad ORDER BY entidad;
@@ -70,13 +76,7 @@ SELECT codigo_error, count(*) AS cantidad FROM rechazos GROUP BY codigo_error OR
 SUMMARIZE silver_metricas;
 ```
 
-La UI demuestra que el staging textual, la evaluación, los datos aceptados y la evidencia rechazada conviven en la misma instancia local. No tiene autenticación y su proceso mantiene abierta la base: el puerto se publica sólo en `127.0.0.1` y hay que detenerla antes de publicar Silver o ejecutar cualquier otro SQL.
-
-```bash
-docker compose exec -T duckdb-transformer sh /scripts/detener_duckdb_ui.sh
-```
-
-El puerto del host se configura con `DUCKDB_UI_PORT` en `.env`; si se cambia, usá ese valor en la URL. El pipeline automatizado detiene la UI al comenzar, pero los pasos manuales fallan con un mensaje explícito mientras permanece activa.
+La UI demuestra que el staging textual, la evaluación, los datos aceptados y la evidencia rechazada conviven en la misma instancia local. Tu proceso `duckdb` mantiene abierta la base: hay que cerrarlo (`Ctrl+C` o `.exit` en esa terminal) antes de publicar Silver o ejecutar cualquier otro SQL desde el contenedor, que de lo contrario falla por el lock del archivo.
 
 MinIO usa el bucket `lakehouse`:
 

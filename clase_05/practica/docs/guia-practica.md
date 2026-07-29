@@ -21,7 +21,7 @@ docker compose up -d --build --wait
 docker compose ps
 ```
 
-Los servicios `minio-storage`, `minio-admin`, `postgres-warehouse`, `duckdb-transformer` y `pgadmin-warehouse` deben figurar en ejecución; MinIO y PostgreSQL deben estar saludables. Las imágenes están fijadas y DuckDB se construye a partir del binario `1.4.3`, con su extensión oficial `ui` preinstalada para esa misma versión.
+Los servicios `minio-storage`, `minio-admin`, `postgres-warehouse`, `duckdb-transformer` y `pgadmin-warehouse` deben figurar en ejecución; MinIO y PostgreSQL deben estar saludables. Las imágenes están fijadas y DuckDB se construye a partir del binario `1.4.3`. El paso 6 requiere además instalar ese mismo binario en tu máquina para inspeccionar gráficamente.
 
 > Este despliegue es local y usa contenedores para reproducir servicios con semánticas similares a las disponibles en la nube. MinIO ofrece una API compatible con S3, pero ejecutar este stack no constituye un despliegue en una nube real.
 
@@ -137,16 +137,26 @@ El último resultado de `05_verificar_calidad.sql` debe ser `CONTROLES_OK`.
 
 ## 6. Inspeccionar DuckDB gráficamente
 
-Iniciar la UI contra la base persistente que acaba de crear el paso 02.
+`clase_05.duckdb` vive en `./duckdb_data`, una carpeta del host montada como bind mount en `/workspace` dentro de `duckdb-transformer`. Esto permite abrir la UI oficial de DuckDB **directamente desde tu máquina**, sin pasar por la red de Docker.
 
-**Dónde ejecutarlo:** terminal, desde `clase_05/practica`.
+> **Por qué no se hace desde el contenedor:** la UI oficial de DuckDB sólo escucha en loopback y no admite bind a `0.0.0.0`. Para publicarla igual habría que interponer un proxy TCP entre el contenedor y el host, y ese salto adicional es justamente lo que dispara `Failed to resolve app state` / `RangeError: Offset is outside the bounds of the DataView` en el navegador — un problema conocido y todavía abierto de `duckdb-ui` ([duckdb/duckdb-ui#22](https://github.com/duckdb/duckdb-ui/issues/22), [#110](https://github.com/duckdb/duckdb-ui/issues/110)), independiente del sistema operativo. Abriendo la UI en un proceso `duckdb` nativo del host se evita ese salto por completo.
+
+Instalar el CLI de DuckDB una única vez (binario portable, sin dependencias, disponible para Windows, macOS y Linux): seguir <https://duckdb.org/install>.
+
+**Dónde ejecutarlo:** terminal en tu máquina (no `docker compose exec`), desde `clase_05/practica`.
 
 ```bash
-docker compose exec -T duckdb-transformer sh /scripts/iniciar_duckdb_ui.sh
-docker compose exec -T duckdb-transformer sh /scripts/estado_duckdb_ui.sh
+duckdb duckdb_data/clase_05.duckdb
 ```
 
-Abrir <http://127.0.0.1:4213>. Si se modificó `DUCKDB_UI_PORT` en `.env`, reemplazar `4213` por ese valor. En la UI, elegir o crear un notebook local conectado a `clase_05` y comparar estas capas:
+Dentro del prompt de DuckDB:
+
+```sql
+LOAD ui;
+CALL start_ui_server();
+```
+
+Debe abrirse el navegador en `http://localhost:4213` (o imprimir esa URL si no abre automáticamente). En la UI, elegir o crear un notebook local conectado a `clase_05` y comparar estas capas:
 
 | Tablas | Qué permiten observar |
 | --- | --- |
@@ -182,11 +192,11 @@ Resultados esperados, en el mismo orden:
 - Las 32 métricas Silver ordenadas por lote e identificador.
 - El perfil estadístico y de tipos de las columnas de `silver_metricas`.
 
-Las consultas se ejecutan localmente en el proceso nativo de DuckDB. La interfaz no tiene autenticación, por eso Compose publica el puerto exclusivamente sobre `127.0.0.1` y usa un proxy interno mínimo en lugar de `network_mode: host`.
+Las consultas se ejecutan localmente en el proceso nativo de DuckDB que abriste en tu terminal. Esa interfaz no tiene autenticación; por eso corre exclusivamente sobre `localhost` de tu máquina y no se publica ningún puerto de esta UI en Docker.
 
 > La comparación visual entre `raw_*`, `evaluados_*`, `silver_*` y `rechazos` permite seguir el mismo registro desde su estado original hasta su aceptación o rechazo. La UI sirve sólo para inspección; no forma parte del pipeline ni debe permanecer activa durante escrituras.
 
-La UI mantiene abierta `/workspace/clase_05.duckdb`. Para separar claramente inspección y escritura, cualquier paso manual de DuckDB falla mientras está activa. Comprobarlo intentando continuar: debe devolver un error no nulo y no modificar datos.
+Tu proceso `duckdb` local mantiene abierto `duckdb_data/clase_05.duckdb`. Para separar claramente inspección y escritura, cualquier paso manual del contenedor falla mientras ese archivo sigue abierto en tu terminal. Comprobarlo intentando continuar sin cerrarlo: debe devolver un error no nulo (DuckDB rechaza el lock del archivo) y no modificar datos.
 
 **Dónde ejecutarlo:** terminal, desde `clase_05/practica`.
 
@@ -194,13 +204,7 @@ La UI mantiene abierta `/workspace/clase_05.duckdb`. Para separar claramente ins
 docker compose exec -T duckdb-transformer sh /scripts/ejecutar_sql.sh /sql/03_publicar_silver.sql
 ```
 
-Detener la UI desde la terminal obligatoriamente antes de volver a los pasos de escritura.
-
-**Dónde ejecutarlo:** terminal, desde `clase_05/practica`.
-
-```bash
-docker compose exec -T duckdb-transformer sh /scripts/detener_duckdb_ui.sh
-```
+Cerrar la UI obligatoriamente antes de volver a los pasos de escritura: en la terminal donde corre `duckdb`, presionar `Ctrl+C` (o ejecutar `.exit`).
 
 Repetir el comando de detención es seguro. El pipeline automatizado también detiene la UI al comenzar para garantizar un reproceso determinista.
 
@@ -330,8 +334,9 @@ El segundo comando ejecuta `docker compose down -v --remove-orphans` bajo el pro
 - Si PostgreSQL conserva credenciales anteriores, el volumen ya existía. Usar el reinicio completo sólo si se acepta borrar el estado de esta práctica.
 - Si Bronze informa una carga parcial, reiniciar la práctica. El cargador se niega a completar silenciosamente un prefijo incompleto.
 - Si falla la descarga de una extensión DuckDB en el primer uso, verificar la conectividad a Internet y repetir el comando; las extensiones quedan en el volumen de DuckDB.
-- Si la UI no inicia, ejecutar `estado_duckdb_ui.sh` y revisar `/workspace/.duckdb-ui/servidor.log` dentro de `duckdb-transformer`. Su frontend oficial requiere acceso a `https://ui.duckdb.org`.
-- Si un paso DuckDB informa que la UI está activa, detenerla con `detener_duckdb_ui.sh`; no eliminar manualmente el archivo PID.
+- Si la UI local (`duckdb duckdb_data/clase_05.duckdb`) no abre el navegador, abrir manualmente `http://localhost:4213`. Requiere acceso a `https://ui.duckdb.org` para el frontend.
+- Si un paso DuckDB del contenedor informa un lock/`Conflicting lock is held`, es porque la UI local sigue abierta en tu terminal: cerrala con `Ctrl+C` (o `.exit`) y reintentar.
+- Si el CLI `duckdb` no está instalado en tu máquina, seguir <https://duckdb.org/install>; es el mismo requisito para cualquier sistema operativo.
 - Si pgAdmin no encuentra `postgres-warehouse`, comprobar que el servidor se registró desde pgAdmin y no desde el host.
 
 ## 15. Cierre conceptual
