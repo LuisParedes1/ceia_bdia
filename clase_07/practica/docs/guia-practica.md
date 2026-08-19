@@ -193,6 +193,43 @@ Abrir <http://localhost:${WEB_PORT}> (por defecto `http://localhost:3001`).
 > 2. En **"Hacer una pregunta"**, escribir una pregunta sobre los documentos de ese equipo y presionar "Preguntar". La respuesta llega en dos partes: los fragmentos recuperados por `pgvector` (con su distancia coseno) y la respuesta redactada por el LLM usando solo esos fragmentos como contexto — el mismo patrón recuperación-y-generación de la Clase 6, ahora acotado al tenant activo por RLS.
 > 3. En **"Intentar ver otro equipo"**, elegir un equipo distinto del activo y presionar "Intentar acceder". Esto llama a `app/api/intentar-cruzar/route.ts`, que fija `app.tenant_id` en el equipo activo y le pide a la base documentos del equipo objetivo — el mismo ataque que el Paso 9, pero disparado desde la propia aplicación web en lugar de `psql`. El resultado esperado, con RLS correctamente configurado, es un panel verde: **"0 filas — Row Level Security impidió el acceso"**. Si alguna vez aparece un panel rojo con filas listadas, eso indica una regresión real en la configuración de RLS o en el rol `aplicacion` — no debería ocurrir nunca en esta práctica.
 
+## 14bis. Contrastar la web con la misma consulta en pgAdmin (opcional)
+
+**Dónde ejecutarlo:** interfaz web (`http://localhost:${WEB_PORT}`) y pgAdmin (Paso 11), con `web-ui` arriba (Paso 14).
+
+El objetivo es mostrar que lo que responde la web no es magia de la aplicación: es exactamente lo que permite RLS en la base para ese mismo `tenant_id`, verificable a mano con las mismas herramientas del Paso 8.
+
+1. En la web, con la sesión fijada en el primer equipo del selector (tenant 1), preguntar en modo "Búsqueda semántica (embeddings)":
+
+   ```
+   ¿Qué incidentes de seguridad tuvimos con el pool de conexiones?
+   ```
+
+   Anotar los títulos que aparecen en "fragmentos recuperados" (deberían ser documentos de ese equipo relacionados con fuga de contexto en el pool).
+
+2. En pgAdmin, conectado con una segunda conexión registrada para el rol `aplicacion` (no la del usuario administrador del Paso 11), abrir un Query Tool y reproducir el mismo filtro a mano:
+
+   ```sql
+   BEGIN;
+   SET LOCAL app.tenant_id = '1';
+
+   SELECT id, titulo, categoria FROM documentos ORDER BY id;
+
+   SELECT id, titulo, categoria,
+          embedding <=> (SELECT embedding FROM fragmentos WHERE id = 2) AS distancia
+   FROM fragmentos
+   ORDER BY distancia
+   LIMIT 5;
+
+   COMMIT;
+   ```
+
+   Los documentos y fragmentos deben coincidir con los que mostró la web en el paso anterior.
+
+3. Cambiar la sesión activa a otro equipo (tanto en el selector de la web como en el `SET LOCAL app.tenant_id` de pgAdmin) y repetir la misma pregunta/consulta: el conjunto de resultados cambia por completo y no se superpone con el del tenant anterior.
+
+> **Qué observar:** la web y pgAdmin, con el mismo `tenant_id` y el mismo rol `aplicacion`, ven exactamente el mismo subconjunto de filas — porque ambas dependen del mismo mecanismo (RLS + `app.tenant_id`), no de que la aplicación web decida qué mostrar por su cuenta. Para reforzar el contraste, correr también `docker compose exec -T postgres-vectorial sh /scripts/ejecutar_sql.sh /sql/02_probar_sin_rls.sql` (Paso 4) o conectarse en pgAdmin con el usuario administrador: en ambos casos se vuelven a ver los 6 equipos mezclados, porque ese rol no está sujeto a RLS.
+
 ## 15. Prompt injection: pedirle al LLM que rompa las reglas
 
 **Dónde ejecutarlo:** en la interfaz web (`http://localhost:${WEB_PORT}`, Paso 14), con el servidor arriba.
