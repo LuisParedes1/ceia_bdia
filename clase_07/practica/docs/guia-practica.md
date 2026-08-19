@@ -210,7 +210,6 @@ El objetivo es mostrar que lo que responde la web no es magia de la aplicación:
 2. En pgAdmin, conectado con una segunda conexión registrada para el rol `aplicacion` (no la del usuario administrador del Paso 11), abrir un Query Tool y reproducir el mismo filtro a mano:
 
    ```sql
-   BEGIN;
    SET LOCAL app.tenant_id = '1';
 
    SELECT id, titulo, categoria FROM documentos ORDER BY id;
@@ -221,7 +220,6 @@ El objetivo es mostrar que lo que responde la web no es magia de la aplicación:
    ORDER BY distancia
    LIMIT 5;
 
-   COMMIT;
    ```
 
    Los documentos y fragmentos deben coincidir con los que mostró la web en el paso anterior.
