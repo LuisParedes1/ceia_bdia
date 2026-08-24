@@ -1,7 +1,8 @@
-name: generic-student-project
+name: bdia-project
 
 services:
   landing:
+    container_name: landing
     build:
       context: ./landing
       args:
@@ -15,6 +16,7 @@ services:
       retries: 5
 
   web:
+    container_name: web
     build:
       context: ./frontend
       args:
@@ -31,10 +33,31 @@ services:
       timeout: 3s
       retries: 5
 
+  embeddings-api:
+    container_name: embeddings-api
+    build: ./embeddings
+    environment:
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-intfloat/multilingual-e5-small}
+    ports:
+      - "127.0.0.1:${EMBEDDINGS_API_PORT:-8011}:8000"
+    volumes:
+      - student-project-model-cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/salud"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
   api:
+    container_name: api
     build: ./backend
     environment:
       APP_ENV: ${APP_ENV:-development}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      MEMBER_EMAIL: ${MEMBER_EMAIL}
+      VIEWER_EMAIL: ${VIEWER_EMAIL}
+      FIXTURE_PASSWORD: ${FIXTURE_PASSWORD}
       RUNTIME_DATABASE_URL: postgresql+psycopg://app_runtime:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
       MIGRATOR_DATABASE_URL: postgresql+psycopg://project_migrator:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
       ASSISTANT_DATABASE_URL: postgresql+psycopg://assistant_reader:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
@@ -46,6 +69,10 @@ services:
       SMTP_FROM: ${SMTP_FROM:-noreply@example.test}
       SESSION_SECRET: ${SESSION_SECRET:-local-session-secret-change-me}
       RECOVERY_TOKEN_SECRET: ${RECOVERY_TOKEN_SECRET:-local-recovery-secret-change-me}
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-intfloat/multilingual-e5-small}
+      EMBEDDINGS_API_URL: http://embeddings-api:8000
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       BACKEND_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-5173}","http://localhost:${LANDING_PORT:-4321}"]'
     ports:
       - "${API_PORT:-8000}:8000"
@@ -54,6 +81,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      embeddings-api:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -67,6 +96,7 @@ services:
       retries: 5
 
   db:
+    container_name: pgvector
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: student_project
@@ -83,7 +113,34 @@ services:
       timeout: 5s
       retries: 5
 
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4:9.17
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - student-project-pgadmin:/var/lib/pgadmin
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/venv/bin/python",
+          "-c",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1/misc/ping', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   minio:
+    container_name: minio
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
@@ -105,6 +162,7 @@ services:
       retries: 5
 
   minio-init:
+    container_name: minio-init
     image: minio/mc:latest
     depends_on:
       minio:
@@ -122,6 +180,7 @@ services:
       retries: 1
 
   mailpit:
+    container_name: mailpit
     image: axllent/mailpit:latest
     ports:
       - "${MAILPIT_SMTP_PORT:-1025}:1025"
@@ -135,4 +194,6 @@ services:
 
 volumes:
   student-project-postgres:
+  student-project-pgadmin:
   student-project-minio:
+  student-project-model-cache:

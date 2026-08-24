@@ -100,7 +100,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   new Headers(init.headers).forEach((value, key) => {
     headers[key] = value;
   });
-  if (init.body) headers["content-type"] = "application/json";
+  if (init.body && !(init.body instanceof FormData))
+    headers["content-type"] = "application/json";
   if (method !== "GET") headers["x-csrf-token"] = csrf() ?? "";
 
   let response: Response;
@@ -187,4 +188,143 @@ export const createMember = (email: string, role: MemberRole) =>
   request("/members", {
     method: "POST",
     body: JSON.stringify({ email, role }),
+  });
+
+export type ExperimentStatus = "draft" | "running" | "completed" | "failed";
+export type MetricType = "number" | "text" | "boolean" | "json";
+export type Metric = {
+  id: string;
+  name: string;
+  value_type: MetricType;
+  number_value: number | null;
+  text_value: string | null;
+  boolean_value: boolean | null;
+  json_value: unknown;
+  unit: string | null;
+  step: number | null;
+  recorded_at: string;
+  creator_id: string;
+};
+export type ExperimentResult = {
+  id: string;
+  status: "completed" | "failed";
+  input_summary: string | null;
+  output_summary: string | null;
+  created_at: string;
+  creator_id: string;
+  metrics: Metric[];
+};
+export type Experiment = {
+  id: string;
+  name: string;
+  status: ExperimentStatus;
+  created_at: string;
+  updated_at: string;
+  creator_id: string;
+  results?: ExperimentResult[];
+};
+export type ExperimentsResponse = {
+  items: Experiment[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+};
+export type MetricInput = {
+  name: string;
+  type: MetricType;
+  value: number | string | boolean | object;
+  unit?: string;
+  step?: number;
+};
+export const getExperiments = (page: number, perPage = 10) =>
+  request<ExperimentsResponse>(`/experiments?page=${page}&per_page=${perPage}`);
+export const getExperiment = (id: string) =>
+  request<Experiment>(`/experiments/${id}`);
+export const createExperiment = (name: string) =>
+  request<Experiment>("/experiments", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+export const updateExperiment = (id: string, status: ExperimentStatus) =>
+  request<Experiment>(`/experiments/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+export const appendExperimentResult = (
+  id: string,
+  payload: {
+    status: "completed" | "failed";
+    input_summary?: string;
+    output_summary?: string;
+    metrics: MetricInput[];
+  },
+) =>
+  request<ExperimentResult>(`/experiments/${id}/results`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
+export type Document = {
+  id: string;
+  name: string;
+  content_type?: string;
+  size_bytes?: number;
+  ingestion_status: DocumentStatus;
+};
+export type Citation = {
+  chunk_id: string;
+  document_id: string;
+  document_name: string;
+  ordinal: number;
+  content: string;
+  distance?: number;
+};
+export const uploadDocument = (file: File) => {
+  const body = new FormData();
+  body.append("file", file);
+  return request<Document>("/documents", { method: "POST", body });
+};
+export const ingestDocument = (id: string) =>
+  request<Document & { chunk_count: number }>(`/documents/${id}/ingest`, {
+    method: "POST",
+  });
+export const retrieveDocuments = (query: string, limit = 5) =>
+  request<{ citations: Citation[] }>("/documents/retrieve", {
+    method: "POST",
+    body: JSON.stringify({ query, limit }),
+  });
+export const downloadDocument = async (id: string) => {
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/documents/${id}/download`, {
+      credentials: "include",
+    });
+  } catch {
+    throw new Error("La API no está disponible.");
+  }
+  if (!response.ok) throw new Error(statusMessage(response.status));
+  return response.blob();
+};
+
+export type AssistantMode = "document" | "relational" | "combined" | "auto";
+export type AssistantRelationalValue = string | number | boolean | null;
+
+export type AssistantResponse = {
+  requested_mode: AssistantMode;
+  resolved_mode: Exclude<AssistantMode, "auto">;
+  status: "complete" | "partial";
+  answer: string;
+  citations: Citation[];
+  relational: null | {
+    rows: Record<string, AssistantRelationalValue>[];
+    sql_provenance: { query: string; row_count: number };
+  };
+  unavailable: ("document" | "relational")[];
+};
+export const queryAssistant = (prompt: string, mode: AssistantMode) =>
+  request<AssistantResponse>("/assistant/query", {
+    method: "POST",
+    body: JSON.stringify({ prompt, mode }),
   });

@@ -36,6 +36,9 @@ import { ConfirmDialog } from "./components/custom/ConfirmDialog";
 import { PasswordInput } from "./components/custom/PasswordInput";
 import { ThemeProvider, ThemeToggle } from "./theme";
 import { UsersPage } from "./admin/UsersPage";
+import { ExperimentsPage } from "./experiments/ExperimentsPage";
+import { DocumentsPage } from "./documents/DocumentsPage";
+import { AssistantPage } from "./assistant/AssistantPage";
 
 type Auth = {
   session: Session | null;
@@ -473,6 +476,14 @@ function UsersRoute() {
     />
   );
 }
+function ExperimentsRoute() {
+  const { session } = useAuth();
+  return <ExperimentsPage canMutate={session?.role !== "viewer"} />;
+}
+function DocumentsRoute() {
+  const { session } = useAuth();
+  return <DocumentsPage canMutate={session?.role !== "viewer"} />;
+}
 function AppRoutes() {
   return (
     <Routes>
@@ -493,15 +504,9 @@ function AppRoutes() {
                 />
                 <Route path="/dashboard" element={<Page title="Panel" />} />
                 <Route path="/users" element={<UsersRoute />} />
-                <Route
-                  path="/experiments"
-                  element={<Page title="Experimentos" />}
-                />
-                <Route
-                  path="/documents"
-                  element={<Page title="Documentos" />}
-                />
-                <Route path="/assistant" element={<Page title="Asistente" />} />
+                <Route path="/experiments" element={<ExperimentsRoute />} />
+                <Route path="/documents" element={<DocumentsRoute />} />
+                <Route path="/assistant" element={<AssistantPage />} />
                 <Route
                   path="*"
                   element={<Navigate to="/dashboard" replace />}

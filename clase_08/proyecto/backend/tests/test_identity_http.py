@@ -17,12 +17,13 @@ from uuid import uuid4
 
 BASE_URL = os.getenv("TEST_API_URL", "")
 MAILPIT_URL = os.getenv("MAILPIT_URL", "")
+WEB_ORIGIN = os.getenv("TEST_WEB_ORIGIN", "http://localhost:5173")
 
 
 @unittest.skipUnless(BASE_URL and MAILPIT_URL, "set TEST_API_URL and MAILPIT_URL for identity HTTP probes")
 class IdentityHttpTests(unittest.TestCase):
-    def request(self, path: str, payload: dict | None = None, headers: dict | None = None) -> tuple[int, dict, dict]:
-        request = Request(f"{BASE_URL}{path}", headers=headers or {}, method="POST" if payload is not None else "GET")
+    def request(self, path: str, payload: dict | None = None, headers: dict | None = None, method: str | None = None) -> tuple[int, dict, dict]:
+        request = Request(f"{BASE_URL}{path}", headers=headers or {}, method=method or ("POST" if payload is not None else "GET"))
         if payload is not None:
             request.data = json.dumps(payload).encode()
             request.add_header("Content-Type", "application/json")
@@ -40,7 +41,25 @@ class IdentityHttpTests(unittest.TestCase):
         return tuple(re.search(r"(?:session_token|csrf_token)=([^;]+)", value).group(1) for value in values)  # type: ignore[return-value]
 
     def csrf_headers(self, session: str, csrf: str) -> dict[str, str]:
-        return {"Origin": "http://localhost:5173", "Cookie": f"session_token={session}; csrf_token={csrf}", "X-CSRF-Token": csrf}
+        return {"Origin": WEB_ORIGIN, "Cookie": f"session_token={session}; csrf_token={csrf}", "X-CSRF-Token": csrf}
+
+    def test_seeded_stack_new_admin_can_create_viewer(self) -> None:
+        email = f"seed-regression-owner-{uuid4()}@example.com"
+        status, headers, registered = self.request(
+            "/api/auth/register",
+            {"email": email, "password": "correct-horse", "tenant_name": "Seed Regression Lab"},
+        )
+        self.assertEqual((status, registered["role"]), (201, "admin"))
+        session, csrf = self.cookies(headers)
+        session_status = self.request("/api/auth/session", headers={"Cookie": f"session_token={session}"})
+        self.assertEqual((session_status[0], session_status[2]["capabilities"]), (200, ["members:manage"]))
+        viewer_email = f"seed-regression-viewer-{uuid4()}@example.com"
+        created = self.request(
+            "/api/members",
+            {"email": viewer_email, "role": "viewer"},
+            self.csrf_headers(session, csrf),
+        )
+        self.assertEqual((created[0], created[2]["role"]), (201, "viewer"))
 
     def test_invalid_email_payloads_return_422_without_identity_side_effects(self) -> None:
         invalid_email = "not-an-email"
@@ -94,6 +113,17 @@ class IdentityHttpTests(unittest.TestCase):
                 denied = self.request(f"/api/members?{query}", headers={"Cookie": f"session_token={session}"})
                 self.assertEqual(denied[0], 422)
                 self.assertIn("Los datos enviados no son válidos.", str(denied[2]))
+        created = self.request("/api/experiments", {"name": "Model comparison"}, self.csrf_headers(session, csrf))
+        self.assertEqual((created[0], created[2]["status"]), (201, "draft"))
+        experiment_id = created[2]["id"]
+        running = self.request(f"/api/experiments/{experiment_id}", {"status": "running"}, self.csrf_headers(session, csrf), "PATCH")
+        self.assertEqual((running[0], running[2]["status"]), (200, "running"))
+        result = self.request(f"/api/experiments/{experiment_id}/results", {"status": "completed", "input_summary": "dataset v1", "output_summary": "trained", "metrics": [{"name": "accuracy", "type": "number", "value": 0.91, "unit": "%", "step": 1}]}, self.csrf_headers(session, csrf))
+        self.assertEqual((result[0], result[2]["metrics"][0]["value_type"]), (201, "number"))
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "completed"}, self.csrf_headers(session, csrf), "PATCH")[0], 200)
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "running"}, self.csrf_headers(session, csrf), "PATCH")[0], 409)
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}/results/{result[2]['id']}", {"output_summary": "edited"}, self.csrf_headers(session, csrf), "PATCH")[0], 404)
+
         login_status, login_headers, _ = self.request("/api/auth/login", {"email": email, "password": "correct-horse"})
         self.assertEqual(login_status, 200)
         login_session, _ = self.cookies(login_headers)
@@ -125,6 +155,8 @@ class IdentityHttpTests(unittest.TestCase):
         denied_email = f"denied-{uuid4()}@example.com"
         self.assertEqual(self.request("/api/members", headers={"Cookie": f"session_token={viewer_session}"})[0], 403)
         self.assertEqual(self.request("/api/members", {"email": denied_email, "role": "member"}, self.csrf_headers(viewer_session, viewer_csrf))[0], 403)
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", headers={"Cookie": f"session_token={viewer_session}"})[0], 200)
+        self.assertEqual(self.request("/api/experiments", {"name": "denied"}, self.csrf_headers(viewer_session, viewer_csrf))[0], 403)
         with urlopen(f"{MAILPIT_URL}/api/v1/messages", timeout=10) as response:
             before = len(json.loads(response.read())["messages"])
         self.assertEqual(self.request("/api/auth/recovery/request", {"email": denied_email})[0], 202)
@@ -139,10 +171,12 @@ class IdentityHttpTests(unittest.TestCase):
             isolated = self.request("/api/members", headers={"Cookie": f"session_token={other_session}"})
             self.assertEqual((isolated[0], isolated[2]["total"]), (200, 1))
             self.assertNotIn(email, [item["email"] for item in isolated[2]["items"]])
+            self.assertEqual(self.request(f"/api/experiments/{experiment_id}", headers={"Cookie": f"session_token={other_session}"})[0], 404)
             self.assertEqual(self.request("/api/members", {"email": viewer_email, "role": "member"}, self.csrf_headers(other_session, other_csrf))[0], 409)
 
             unassigned_email = f"unassigned-{uuid4()}@example.com"
-            with psycopg.connect(os.environ["TEST_DATABASE_URL"]) as connection:
+            database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+            with psycopg.connect(database_url) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("INSERT INTO users (id,email,password_hash) VALUES (%s,%s,%s)", (str(uuid4()), unassigned_email, hash_password("correct-horse")))
             self.assertEqual(self.request("/api/auth/login", {"email": unassigned_email, "password": "correct-horse"})[0], 403)

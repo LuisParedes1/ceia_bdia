@@ -52,14 +52,14 @@ Predecessor: PR 2. Rollback: identity routes/security and minimal frontend auth 
 
 Predecessor: PR 3. Rollback: experiment domain/routes/tests. Finish: member mutation and viewer read-only behavior are executable.
 
-- [ ] Adapt pagination from `material_desarrollo/backend/app/services/pagination.py` and add target-owned experiment lifecycle, append-only results, typed metrics, provenance, repositories/services/schemas/routes under `backend/app/{domain,repositories,services,api}`; verify role matrix, lifecycle, tenant FKs, immutability, and cross-tenant denial. <!-- sdd-owner: implementation -->
+- [x] Adapt pagination from `material_desarrollo/backend/app/services/pagination.py` and add target-owned experiment lifecycle, append-only results, typed metrics, provenance, repositories/services/schemas/routes under `backend/app/{domain,repositories,services,api}`; verify role matrix, lifecycle, tenant FKs, immutability, and cross-tenant denial. <!-- sdd-owner: implementation -->
 
 ### PR 5 — MinIO plus PDF/TXT/MD ingestion and vector RAG (500–600 lines)
 
 Predecessor: PR 4. Rollback: storage/ingestion/vector/assistant retrieval files and local volumes. Finish: authorized document upload, extraction, embedding, retrieval, and citation work for the demo.
 
-- [ ] Adapt compatible generic upload/storage patterns into `backend/app/storage/`, `infra/minio/init.sh`, and asset APIs with opaque tenant keys, private bucket, authorization, and bounded uploads; support only PDF/TXT/MD for ingestion (PNG/JPEG/CSV/JSON remain deferred unless already trivial), and verify guessed-key denial and original-object preservation. <!-- sdd-owner: implementation -->
-- [ ] Add bounded extractors, chunk activation, fixed-dimension `EmbeddingProvider`, pgvector persistence, and tenant-filtered retrieval under `backend/app/{ingestion,providers,assistant}`; use one configured/local provider seam, fail closed when unavailable, and verify colliding cross-tenant vector matches never reach provider context. <!-- sdd-owner: implementation -->
+- [x] Adapt compatible generic upload/storage patterns into `backend/app/storage/`, `infra/minio/init.sh`, and asset APIs with opaque tenant keys, private bucket, authorization, and bounded uploads; support only PDF/TXT/MD for ingestion (PNG/JPEG/CSV/JSON remain deferred unless already trivial), and verify guessed-key denial and original-object preservation. <!-- sdd-owner: implementation -->
+- [x] Add bounded extractors, chunk activation, fixed-dimension `EmbeddingProvider`, pgvector persistence, and tenant-filtered retrieval under `backend/app/{ingestion,providers,assistant}`; use one configured/local provider seam, fail closed when unavailable, and verify colliding cross-tenant vector matches never reach provider context. <!-- sdd-owner: implementation -->
 
 ## Day 3 — assistant, screens, fixtures, and proof
 

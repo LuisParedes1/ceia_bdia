@@ -4,11 +4,11 @@
 
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "db", "minio", "mailpit"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "db", "minio", "mailpit", "embeddings-api"}
 
 
 class Settings(BaseSettings):
@@ -42,24 +42,17 @@ class Settings(BaseSettings):
     recovery_token_ttl_minutes: int = Field(default=30, ge=1, le=120)
     recovery_requests_per_hour: int = Field(default=5, ge=1, le=100)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=25 * 1024 * 1024)
+    embedding_dimension: int = Field(default=384, ge=384, le=384)
+    modelo_embedding: str = "intfloat/multilingual-e5-small"
+    embeddings_api_url: str = "http://embeddings-api:8000"
     sql_statement_timeout_ms: int = Field(default=2_000, ge=100, le=30_000)
     sql_max_rows: int = Field(default=200, ge=1, le=200)
     sql_max_result_bytes: int = Field(default=256 * 1024, ge=1, le=256 * 1024)
 
-    openai_compatible_enabled: bool = False
-    openai_compatible_base_url: str | None = None
-    openai_compatible_api_key: str | None = None
-    openai_compatible_model: str | None = None
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openai/gpt-4o-mini"
 
-    @model_validator(mode="after")
-    def enabled_provider_is_complete(self) -> "Settings":
-        if self.openai_compatible_enabled and not (
-            self.openai_compatible_base_url and self.openai_compatible_model
-        ):
-            raise ValueError("an enabled provider requires a base URL and model")
-        return self
-
-    @field_validator("api_public_url", "web_public_url", "landing_public_url")
+    @field_validator("api_public_url", "web_public_url", "landing_public_url", "embeddings_api_url")
     @classmethod
     def public_urls_are_local(cls, value: str) -> str:
         if urlparse(value).hostname not in _LOCAL_HOSTS:
