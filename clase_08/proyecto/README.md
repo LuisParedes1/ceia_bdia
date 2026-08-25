@@ -91,10 +91,10 @@ Los tres correos de fixture deben ser distintos después de normalizarlos y debe
 El fixture es repetible y crea datos aislados para dos espacios de demostración (`alpha` y `beta`) con roles `admin`, `member` y `viewer`. Toma las cuatro credenciales sintéticas ya definidas en `.env`; `alpha` usa los correos `ADMIN_EMAIL`, `MEMBER_EMAIL` y `VIEWER_EMAIL`, mientras que `beta` conserva identidades demo deterministas. Todas usan `FIXTURE_PASSWORD`.
 
 ```bash
-docker compose run --rm -T \
-  -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-security-fixtures.py:ro" \
-  api python /app/seed-security-fixtures.py
+docker compose run --rm -T -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-security-fixtures.py:ro" api python /app/seed-security-fixtures.py
 ```
+
+El comando se documenta en una sola línea para evitar que espacios accidentales después de `\` rompan la continuación en Bash.
 
 El script exige las cuatro variables de fixture, correos normalizados distintos que pasen la validación del backend y una contraseña de al menos 8 caracteres; no imprime sus valores, tokens ni cookies. Para probar el login del tenant `alpha`, abrí la aplicación y escribí el valor local de `ADMIN_EMAIL`, `MEMBER_EMAIL` o `VIEWER_EMAIL` junto con `FIXTURE_PASSWORD`, sin copiarlos a comandos, documentación ni capturas. Luego ejecutá la verificación integral:
 
@@ -103,6 +103,12 @@ El script exige las cuatro variables de fixture, correos normalizados distintos 
 ```
 
 Este chequeo exige servicios saludables —incluido pgAdmin— y prueba: endpoint de salud, bucket privado, contratos relacionales/vectoriales, guard SQL, matriz de roles, aislamiento HTTP entre tenants, RLS y limpieza del contexto transaccional del pool. Conserva el origen CSRF derivado de `WEB_PORT` cuando ese puerto se personaliza.
+
+### Panel y exportaciones
+
+Después de iniciar sesión, abrí `/dashboard` para consultar los últimos 7, 30 o 90 días, o elegí un rango personalizado de hasta 366 días. La búsqueda, estado, orden y paginación se aplican al período seleccionado; el panel no acepta un tenant desde la URL porque la API lo deriva de la sesión activa.
+
+Los botones **Exportar XLSX** y **Exportar PDF** generan archivos en el navegador con los KPIs y las filas del filtro actual. XLSX usa ExcelJS y PDF usa jsPDF con una tabla estructurada; no se renderiza HTML como archivo ni se captura una imagen del panel. Para contar con historia de demostración en ambos tenants, ejecutá el comando de fixtures anterior: agrega experimentos, resultados y métricas numéricas deterministas distribuidos en 91 días, sin imprimir credenciales.
 
 ### Acceso local a pgAdmin
 

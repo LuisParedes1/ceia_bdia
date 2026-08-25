@@ -1,6 +1,18 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Info,
+  Play,
+  Plus,
+  Search,
+} from "lucide-react";
 import * as api from "../api";
+import { RowActions } from "../components/custom/RowActions";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -26,6 +38,38 @@ const statusLabel: Record<api.ExperimentStatus, string> = {
   completed: "Completado",
   failed: "Fallido",
 };
+const pageSizes = [10, 20, 30, 40, 50];
+const defaultQuery: api.ExperimentsQuery = {
+  page: 1,
+  per_page: 10,
+  search: "",
+  status: "",
+  sort: "created_at:desc",
+};
+const experimentSorts = new Set<api.ExperimentsQuery["sort"]>([
+  "created_at:desc",
+  "created_at:asc",
+  "name:asc",
+  "name:desc",
+  "result_count:desc",
+]);
+function queryFrom(params: URLSearchParams): api.ExperimentsQuery {
+  const page = Number(params.get("page"));
+  const perPage = Number(params.get("per_page"));
+  const status = params.get("status");
+  const sort = params.get("sort");
+  return {
+    page: page > 0 ? page : defaultQuery.page,
+    per_page: pageSizes.includes(perPage) ? perPage : defaultQuery.per_page,
+    search: params.get("search") ?? "",
+    status: ["draft", "running", "completed", "failed"].includes(status ?? "")
+      ? (status as api.ExperimentStatus)
+      : "",
+    sort: experimentSorts.has(sort as api.ExperimentsQuery["sort"])
+      ? (sort as api.ExperimentsQuery["sort"])
+      : defaultQuery.sort,
+  };
+}
 const typeLabel: Record<api.MetricType, string> = {
   number: "Número",
   text: "Texto",
@@ -64,6 +108,7 @@ function ExperimentDialog({
   const [metricName, setMetricName] = useState("");
   const [metricType, setMetricType] = useState<api.MetricType>("number");
   const [metricRaw, setMetricRaw] = useState("");
+  const [transitioning, setTransitioning] = useState(false);
   useEffect(() => {
     if (!experiment) return;
     api
@@ -79,6 +124,8 @@ function ExperimentDialog({
   }, [experiment]);
   if (!experiment) return null;
   const transition = async (status: api.ExperimentStatus) => {
+    if (transitioning) return;
+    setTransitioning(true);
     try {
       await api.updateExperiment(experiment.id, status);
       onChanged();
@@ -89,6 +136,8 @@ function ExperimentDialog({
           ? reason.message
           : "No se pudo actualizar el experimento.",
       );
+    } finally {
+      setTransitioning(false);
     }
   };
   const submitResult = async (event: FormEvent) => {
@@ -186,9 +235,16 @@ function ExperimentDialog({
               <p className="notice">Todavía no hay resultados registrados.</p>
             )}
             {canMutate && detail.status === "draft" && (
-              <Button onClick={() => void transition("running")}>
-                Iniciar experimento
-              </Button>
+              <RowActions
+                actions={[
+                  {
+                    label: "Iniciar experimento",
+                    icon: Play,
+                    onClick: () => void transition("running"),
+                    busy: transitioning,
+                  },
+                ]}
+              />
             )}
             {canMutate && detail.status === "running" && (
               <form onSubmit={submitResult}>
@@ -282,27 +338,53 @@ function ExperimentDialog({
 }
 
 export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
-  const [page, setPage] = useState(1),
-    [result, setResult] = useState<api.ExperimentsResponse | null>(null);
+  const [params, setParams] = useSearchParams();
+  const query = useMemo(() => queryFrom(params), [params]);
+  const [result, setResult] = useState<api.ExperimentsResponse | null>(null);
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [reload, setReload] = useState(0);
+  const [search, setSearch] = useState(query.search);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [name, setName] = useState(""),
     [creating, setCreating] = useState(false),
     [selected, setSelected] = useState<api.Experiment | null>(null);
   useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(query.search), 0);
+    return () => window.clearTimeout(timer);
+  }, [query.search]);
+  useEffect(() => {
+    let active = true;
     api
-      .getExperiments(page)
-      .then(setResult)
-      .catch((reason) =>
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "No se pudieron cargar los experimentos.",
-        ),
+      .getExperiments(query)
+      .then((next) => active && setResult(next))
+      .catch(
+        (reason) =>
+          active &&
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "No se pudieron cargar los experimentos.",
+          ),
       )
-      .finally(() => setLoading(false));
-  }, [page, reload]);
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [query, reload]);
+  const update = (next: Partial<api.ExperimentsQuery>) => {
+    setLoading(true);
+    setError("");
+    const output = new URLSearchParams();
+    Object.entries({ ...query, ...next }).forEach(([key, value]) =>
+      output.set(key, String(value)),
+    );
+    setParams(output);
+  };
+  const searchSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    update({ search, page: 1 });
+  };
   const create = async (event: FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
@@ -310,7 +392,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
       await api.createExperiment(name.trim());
       setName("");
       setCreating(false);
-      setPage(1);
+      update({ page: 1 });
       setReload((value) => value + 1);
     } catch (reason) {
       setError(
@@ -357,6 +439,67 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
           </Button>
         </form>
       )}
+      <form className="directory-toolbar" onSubmit={searchSubmit}>
+        <label className="search-field">
+          <span className="sr-only">Buscar experimentos</span>
+          <Search />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar experimentos"
+          />
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          aria-expanded={filtersOpen}
+          onClick={() => setFiltersOpen(!filtersOpen)}
+        >
+          Filtros <ChevronDown />
+        </Button>
+        <Button type="submit">Buscar</Button>
+        {filtersOpen && (
+          <div className="filters">
+            <label>
+              Estado
+              <select
+                value={query.status}
+                onChange={(event) =>
+                  update({
+                    status: event.target
+                      .value as api.ExperimentsQuery["status"],
+                    page: 1,
+                  })
+                }
+              >
+                <option value="">Todos</option>
+                <option value="draft">Borrador</option>
+                <option value="running">En ejecución</option>
+                <option value="completed">Completado</option>
+                <option value="failed">Fallido</option>
+              </select>
+            </label>
+            <label>
+              Ordenar
+              <select
+                value={query.sort}
+                onChange={(event) =>
+                  update({
+                    sort: event.target.value as api.ExperimentsQuery["sort"],
+                    page: 1,
+                  })
+                }
+              >
+                <option value="created_at:desc">Más recientes</option>
+                <option value="created_at:asc">Más antiguos</option>
+                <option value="name:asc">Nombre A-Z</option>
+                <option value="name:desc">Nombre Z-A</option>
+                <option value="result_count:desc">Más resultados</option>
+              </select>
+            </label>
+          </div>
+        )}
+      </form>
       {loading ? (
         <div
           className="desktop-table-loading"
@@ -389,7 +532,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
                   <TableHead>Nombre</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Actualizado</TableHead>
-                  <TableHead>Acción</TableHead>
+                  <TableHead className="actions-cell">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -400,13 +543,16 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
                       <Badge>{statusLabel[item.status]}</Badge>
                     </TableCell>
                     <TableCell>{date(item.updated_at)}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="outline"
-                        onClick={() => setSelected(item)}
-                      >
-                        Ver detalle
-                      </Button>
+                    <TableCell className="actions-cell">
+                      <RowActions
+                        actions={[
+                          {
+                            label: "Ver detalle",
+                            icon: Info,
+                            onClick: () => setSelected(item),
+                          },
+                        ]}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -419,49 +565,85 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
                 <strong>{item.name}</strong>
                 <Badge>{statusLabel[item.status]}</Badge>
                 <span className="muted">{date(item.updated_at)}</span>
-                <Button variant="outline" onClick={() => setSelected(item)}>
-                  Ver detalle
-                </Button>
+                <RowActions
+                  actions={[
+                    {
+                      label: "Ver detalle",
+                      icon: Info,
+                      onClick: () => setSelected(item),
+                    },
+                  ]}
+                />
               </article>
             ))}
           </div>
           <nav className="pagination" aria-label="Paginación de experimentos">
+            <span>{result.total} experimentos</span>
+            <div className="pagination-page-size">
+              <label htmlFor="experiments-per-page">Filas por página</label>
+              <select
+                id="experiments-per-page"
+                value={query.per_page}
+                onChange={(event) =>
+                  update({ per_page: Number(event.target.value), page: 1 })
+                }
+              >
+                {pageSizes.map((size) => (
+                  <option key={size}>{size}</option>
+                ))}
+              </select>
+            </div>
             <span>
-              {result.total} experimentos · Página {result.page} de{" "}
-              {result.pages}
+              Página {result.page} de {result.pages || 1}
             </span>
             <div>
               <Button
+                aria-label="Primera página"
+                variant="outline"
+                disabled={result.page <= 1}
+                onClick={() => update({ page: 1 })}
+              >
+                <ChevronsLeft />
+              </Button>
+              <Button
                 aria-label="Página anterior"
                 variant="outline"
-                disabled={page <= 1}
-                onClick={() => {
-                  setLoading(true);
-                  setPage(page - 1);
-                }}
+                disabled={result.page <= 1}
+                onClick={() => update({ page: result.page - 1 })}
               >
                 <ChevronLeft />
               </Button>
               <Button
                 aria-label="Página siguiente"
                 variant="outline"
-                disabled={page >= result.pages}
-                onClick={() => {
-                  setLoading(true);
-                  setPage(page + 1);
-                }}
+                disabled={result.page >= result.pages}
+                onClick={() => update({ page: result.page + 1 })}
               >
                 <ChevronRight />
+              </Button>
+              <Button
+                aria-label="Última página"
+                variant="outline"
+                disabled={result.page >= result.pages}
+                onClick={() => update({ page: result.pages || 1 })}
+              >
+                <ChevronsRight />
               </Button>
             </div>
           </nav>
         </>
       ) : (
         <section className="notice">
-          No hay experimentos todavía.
-          {canMutate
-            ? " Creá el primero para comenzar."
-            : " Cuando el equipo cree uno, aparecerá aquí."}
+          {query.search || query.status || query.sort !== defaultQuery.sort ? (
+            "No hay experimentos que coincidan con los filtros."
+          ) : (
+            <>
+              No hay experimentos todavía.
+              {canMutate
+                ? " Creá el primero para comenzar."
+                : " Cuando el equipo cree uno, aparecerá aquí."}
+            </>
+          )}
         </section>
       )}
       <ExperimentDialog

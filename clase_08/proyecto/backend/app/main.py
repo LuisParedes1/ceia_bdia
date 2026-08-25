@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from app.api.assistant import router as assistant_router
 from app.api.auth import router as identity_router
 from app.api.experiments import router as experiments_router
+from app.api.dashboard import router as dashboard_router
 from app.documents import router as documents_router
 from app.core.config import settings
 
@@ -88,7 +89,8 @@ def _status_detail(status_code: int) -> str:
 app = FastAPI(
     title=settings.project_name,
     lifespan=lifespan,
-    openapi_url=None if settings.app_env == "production" else "/api/openapi.json",
+    # pi-lens-ignore: generic-api-key
+    openapi_url=None if settings.app_env == "production" else "/api/openapi.json",  # gitleaks:allow -- public route, not a credential
     docs_url=None if settings.app_env == "production" else "/api/docs",
     redoc_url=None,
 )
@@ -102,6 +104,7 @@ app.add_middleware(
 )
 app.include_router(identity_router)
 app.include_router(experiments_router)
+app.include_router(dashboard_router)
 app.include_router(documents_router)
 app.include_router(assistant_router)
 
@@ -130,4 +133,4 @@ async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
 @app.get("/health", tags=["operations"])
 def health_check() -> dict[str, str]:
     """Return the Compose health contract without depending on future services."""
-    return {"status": "ok", "service": "generic-student-api"}
+    return {"status": "ok", "service": "project-api"}

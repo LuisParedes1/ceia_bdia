@@ -36,10 +36,10 @@ anonymous_status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$MI
 
 say "Proving relational, vector/RAG, MinIO capability, and SQL guard contracts"
 compose run --rm -T --no-deps -v "$PROJECT_DIR/backend:/app:ro" api \
-  python -m unittest -v tests.test_experiments tests.test_documents tests.test_assistant_sql ||
+  python -m unittest -v tests.test_experiments tests.test_documents tests.test_assistant_sql tests.test_dashboard ||
   fail "Backend security contract tests failed."
 
-say "Proving role matrix and tenant isolation through the live HTTP API"
+say "Proving role matrix, dashboard contract, and tenant isolation through the live HTTP API"
 # Runtime connection values remain inside the container and are never echoed.
 compose run --rm -T --no-deps -e TEST_WEB_ORIGIN="$TEST_WEB_ORIGIN" -v "$PROJECT_DIR/backend:/app:ro" api sh -eu -c \
   'TEST_API_URL=http://api:8000 MAILPIT_URL=http://mailpit:8025 TEST_DATABASE_URL="$RUNTIME_DATABASE_URL" python -m unittest -v tests.test_identity_http' ||

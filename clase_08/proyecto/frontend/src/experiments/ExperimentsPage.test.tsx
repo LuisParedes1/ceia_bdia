@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import * as api from "../api";
 import { ExperimentsPage } from "./ExperimentsPage";
 
@@ -36,8 +37,55 @@ const page = (items = [experiment]): api.ExperimentsResponse => ({
   per_page: 10,
   pages: 1,
 });
+const renderPage = (canMutate: boolean) =>
+  render(
+    <MemoryRouter>
+      <ExperimentsPage canMutate={canMutate} />
+    </MemoryRouter>,
+  );
 
 describe("ExperimentsPage", () => {
+  it("renders the Personas-style toolbar and submits its draft search explicitly", async () => {
+    vi.mocked(api.getExperiments).mockResolvedValue(page());
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/experiments?page=2&per_page=20&search=previo&status=running&sort=name%3Aasc",
+        ]}
+      >
+        <ExperimentsPage canMutate={false} />
+      </MemoryRouter>,
+    );
+
+    const search = await screen.findByPlaceholderText("Buscar experimentos");
+    expect(search).toHaveValue("previo");
+    expect(screen.getByRole("button", { name: "Filtros" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Buscar" })).toBeInTheDocument();
+    expect(api.getExperiments).toHaveBeenCalledWith({
+      page: 2,
+      per_page: 20,
+      search: "previo",
+      status: "running",
+      sort: "name:asc",
+    });
+
+    fireEvent.change(search, { target: { value: "sin enviar" } });
+    expect(api.getExperiments).toHaveBeenCalledTimes(1);
+    fireEvent.submit(search.closest("form")!);
+    await waitFor(() =>
+      expect(api.getExperiments).toHaveBeenLastCalledWith({
+        page: 1,
+        per_page: 20,
+        search: "sin enviar",
+        status: "running",
+        sort: "name:asc",
+      }),
+    );
+  });
+
   it("renders bounded loading, empty, and viewer read-only states", async () => {
     let resolve!: (value: api.ExperimentsResponse) => void;
     vi.mocked(api.getExperiments).mockReturnValueOnce(
@@ -45,7 +93,7 @@ describe("ExperimentsPage", () => {
         resolve = done;
       }),
     );
-    const view = render(<ExperimentsPage canMutate={false} />);
+    const view = renderPage(false);
     expect(screen.getByLabelText("Cargando experimentos")).toBeInTheDocument();
     resolve(page([]));
     expect(
@@ -61,7 +109,7 @@ describe("ExperimentsPage", () => {
       ...experiment,
       results: [],
     });
-    render(<ExperimentsPage canMutate={false} />);
+    renderPage(false);
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Ver detalle" }))[0],
     );
@@ -73,10 +121,71 @@ describe("ExperimentsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses the unified pagination controls and requests the selected page size", async () => {
+    const paged = {
+      ...page(),
+      total: 31,
+      pages: 3,
+    };
+    vi.mocked(api.getExperiments).mockImplementation((query) =>
+      Promise.resolve({ ...paged, page: query.page, per_page: query.per_page }),
+    );
+    renderPage(false);
+
+    expect(
+      await screen.findByRole("navigation", {
+        name: "Paginación de experimentos",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Filas por página")).toHaveValue("10");
+    expect(
+      screen.getByRole("button", { name: "Primera página" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Página anterior" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Última página" })).toBeEnabled();
+    expect(
+      screen
+        .getAllByRole("option")
+        .slice(-5)
+        .map((option) => option.textContent),
+    ).toEqual(["10", "20", "30", "40", "50"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Última página" }));
+    await waitFor(() =>
+      expect(api.getExperiments).toHaveBeenLastCalledWith({
+        page: 3,
+        per_page: 10,
+        search: "",
+        status: "",
+        sort: "created_at:desc",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Última página" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Filas por página"), {
+      target: { value: "20" },
+    });
+    await waitFor(() =>
+      expect(api.getExperiments).toHaveBeenLastCalledWith({
+        page: 1,
+        per_page: 20,
+        search: "",
+        status: "",
+        sort: "created_at:desc",
+      }),
+    );
+  });
+
   it("creates an experiment and refreshes the first page", async () => {
     vi.mocked(api.getExperiments).mockResolvedValue(page([]));
     vi.mocked(api.createExperiment).mockResolvedValue(experiment);
-    render(<ExperimentsPage canMutate />);
+    renderPage(true);
     fireEvent.click(
       await screen.findByRole("button", { name: "Crear experimento" }),
     );
@@ -99,7 +208,7 @@ describe("ExperimentsPage", () => {
     vi.mocked(api.updateExperiment).mockRejectedValueOnce(
       new Error("La transición de estado no es válida."),
     );
-    render(<ExperimentsPage canMutate />);
+    renderPage(true);
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Ver detalle" }))[0],
     );
@@ -150,7 +259,7 @@ describe("ExperimentsPage", () => {
       ...running,
       status: "completed",
     });
-    render(<ExperimentsPage canMutate />);
+    renderPage(true);
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Ver detalle" }))[0],
     );

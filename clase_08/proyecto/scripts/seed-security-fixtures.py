@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +26,7 @@ from app.security.password import hash_password  # pyright: ignore[reportMissing
 PREFIX = "https://example.test/gentle-ai/demo/"
 ROLES = ("admin", "member", "viewer")
 TENANTS = (("alpha", "Alpha Research Lab"), ("beta", "Beta Evaluation Lab"))
+DASHBOARD_DAYS = 91
 EMAIL_VARIABLES = {
     "admin": "ADMIN_EMAIL",
     "member": "MEMBER_EMAIL",
@@ -118,6 +120,20 @@ def seed() -> None:
                     connection.execute(text("INSERT INTO membership_roles(tenant_id,user_id,role_id) VALUES (:tenant,:user,:role) ON CONFLICT DO NOTHING"), {"tenant": tenant_id, "user": user_id, "role": roles[role]})
                 connection.execute(text("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES (:tenant,:role,'members:manage') ON CONFLICT DO NOTHING"), {"tenant": tenant_id, "role": roles["admin"]})
                 connection.execute(text("INSERT INTO experiments(id,tenant_id,creator_id,name,status) VALUES (:id,:tenant,:user,:name,'completed') ON CONFLICT DO NOTHING"), {"id": experiment_id, "tenant": tenant_id, "user": users["admin"], "name": f"{tenant_name} baseline"})
+                for day in range(DASHBOARD_DAYS):
+                    created_at = datetime.now(UTC) - timedelta(days=day)
+                    dashboard_experiment = fixture_id(f"tenant/{slug}/dashboard/experiment/{day}")
+                    dashboard_result = fixture_id(f"tenant/{slug}/dashboard/result/{day}")
+                    dashboard_metric = fixture_id(f"tenant/{slug}/dashboard/metric/{day}")
+                    experiment_status = ("completed", "running", "failed", "draft")[day % 4]
+                    connection.execute(text("""INSERT INTO experiments(id,tenant_id,creator_id,name,status,created_at,updated_at)
+                        VALUES (:id,:tenant,:user,:name,:status,:created,:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_experiment, "tenant": tenant_id, "user": users["admin"], "name": f"{tenant_name} dashboard {day + 1:03d}", "status": experiment_status, "created": created_at})
+                    if experiment_status != "draft":
+                        result_status = "failed" if experiment_status == "failed" else "completed"
+                        connection.execute(text("""INSERT INTO results(id,tenant_id,experiment_id,creator_id,status,input_summary,output_summary,created_at)
+                            VALUES (:id,:tenant,:experiment,:user,:status,'dashboard input','dashboard output',:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_result, "tenant": tenant_id, "experiment": dashboard_experiment, "user": users["member"], "status": result_status, "created": created_at})
+                        connection.execute(text("""INSERT INTO metrics(id,tenant_id,result_id,creator_id,name,value_type,number_value,step,recorded_at)
+                            VALUES (:id,:tenant,:result,:user,'dashboard_score','number',:value,:step,:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_metric, "tenant": tenant_id, "result": dashboard_result, "user": users["member"], "value": round(0.5 + day / 200, 3), "step": day, "created": created_at})
                 connection.execute(text("INSERT INTO results(id,tenant_id,experiment_id,creator_id,status,input_summary,output_summary) VALUES (:id,:tenant,:experiment,:user,'completed','deterministic input','deterministic output') ON CONFLICT DO NOTHING"), {"id": result_id, "tenant": tenant_id, "experiment": experiment_id, "user": users["member"]})
                 metric_values = (
                     ("number", {"number": 0.91}), ("text", {"text_value": "accepted"}),

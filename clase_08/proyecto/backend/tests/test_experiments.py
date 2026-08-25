@@ -58,6 +58,32 @@ class ExperimentTests(unittest.TestCase):
         self.assertIn(("/api/experiments/{experiment_id}/results", "POST"), methods)
         self.assertNotIn(("/api/experiments/{experiment_id}/results/{result_id}", "PATCH"), methods)
 
+    def test_experiment_query_helpers_validate_and_escape_literal_search(self) -> None:
+        from pydantic import ValidationError
+
+        from app.api.experiments import ExperimentListQuery
+        from app.repositories.experiments import escape_like
+
+        query = ExperimentListQuery(
+            page=2,
+            per_page=20,
+            search="  100%_ready\\  ",
+            status="running",
+            sort="result_count:desc",
+        )
+        self.assertEqual(query.search, "100%_ready\\")
+        self.assertEqual(query.status, "running")
+        self.assertEqual(query.sort, "result_count:desc")
+        self.assertEqual(escape_like(query.search), r"100\%\_ready\\")
+        invalid_payloads: tuple[dict[str, object], ...] = (
+            {"status": "unknown"},
+            {"status": ""},
+            {"sort": "name:drop"},
+        )
+        for payload in invalid_payloads:
+            with self.assertRaises(ValidationError):
+                ExperimentListQuery.model_validate(cast(object, payload))
+
 
 if __name__ == "__main__":
     unittest.main()

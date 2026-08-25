@@ -3,12 +3,20 @@
 from datetime import UTC, datetime
 import json
 from uuid import UUID, uuid4
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.experiment_schemas import ResultCreate
-from app.services.pagination import Page, PageRequest
+from app.services.pagination import Page
+
+if TYPE_CHECKING:
+    from app.api.experiments import ExperimentListQuery
+
+
+def escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class ExperimentRepository:
@@ -29,11 +37,39 @@ class ExperimentRepository:
             result["metrics"] = [dict(metric) for metric in self.db.execute(text("SELECT * FROM metrics WHERE tenant_id=:tenant AND result_id=:result ORDER BY recorded_at,id"), {"tenant": tenant, "result": result["id"]}).mappings()]
         return item
 
-    def list(self, tenant: UUID, page: PageRequest) -> Page[dict]:
-        values = {"tenant": tenant, "limit": page.per_page, "offset": page.offset}
-        total = self.db.execute(text("SELECT count(*) FROM experiments WHERE tenant_id=:tenant"), values).scalar_one()
-        rows = self.db.execute(text("SELECT * FROM experiments WHERE tenant_id=:tenant ORDER BY created_at DESC,id LIMIT :limit OFFSET :offset"), values).mappings()
-        return Page([dict(row) for row in rows], total, page.page, page.per_page)
+    def list(self, tenant: UUID, query: "ExperimentListQuery") -> Page[dict]:
+        values = {
+            "tenant": tenant,
+            "search": escape_like(query.search),
+            "status": query.status,
+            "sort_created_at_asc": query.sort == "created_at:asc",
+            "sort_created_at_desc": query.sort == "created_at:desc",
+            "sort_name_asc": query.sort == "name:asc",
+            "sort_name_desc": query.sort == "name:desc",
+            "sort_result_count_desc": query.sort == "result_count:desc",
+            "limit": query.per_page,
+            "offset": (query.page - 1) * query.per_page,
+        }
+        total = self.db.execute(text("""SELECT count(*) FROM experiments e
+            WHERE e.tenant_id=:tenant
+              AND (CAST(:status AS varchar) IS NULL OR e.status=CAST(:status AS varchar))
+              AND (:search='' OR e.name ILIKE ('%' || :search || '%') ESCAPE '\\')"""), values).scalar_one()
+        rows = self.db.execute(text("""SELECT e.*, count(r.id) AS result_count
+            FROM experiments e
+            LEFT JOIN results r ON r.tenant_id=e.tenant_id AND r.experiment_id=e.id
+            WHERE e.tenant_id=:tenant
+              AND (CAST(:status AS varchar) IS NULL OR e.status=CAST(:status AS varchar))
+              AND (:search='' OR e.name ILIKE ('%' || :search || '%') ESCAPE '\\')
+            GROUP BY e.id
+            ORDER BY
+              CASE WHEN :sort_created_at_asc THEN e.created_at END ASC,
+              CASE WHEN :sort_created_at_desc THEN e.created_at END DESC,
+              CASE WHEN :sort_name_asc THEN e.name END ASC,
+              CASE WHEN :sort_name_desc THEN e.name END DESC,
+              CASE WHEN :sort_result_count_desc THEN count(r.id) END DESC,
+              e.id DESC
+            LIMIT :limit OFFSET :offset"""), values).mappings()
+        return Page([dict(row) for row in rows], total, query.page, query.per_page)
 
     def update(self, tenant: UUID, experiment_id: UUID, name: str | None, status: str | None) -> dict | None:
         row = self.db.execute(text("UPDATE experiments SET name=COALESCE(:name,name),status=COALESCE(:status,status),updated_at=now() WHERE tenant_id=:tenant AND id=:id RETURNING *"), {"name": name, "status": status, "tenant": tenant, "id": experiment_id}).mappings().first()

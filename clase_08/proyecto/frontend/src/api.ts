@@ -237,8 +237,75 @@ export type MetricInput = {
   unit?: string;
   step?: number;
 };
-export const getExperiments = (page: number, perPage = 10) =>
-  request<ExperimentsResponse>(`/experiments?page=${page}&per_page=${perPage}`);
+export type ExperimentsQuery = {
+  page: number;
+  per_page: number;
+  search: string;
+  status: "" | ExperimentStatus;
+  sort:
+    | "created_at:desc"
+    | "created_at:asc"
+    | "name:asc"
+    | "name:desc"
+    | "result_count:desc";
+};
+export const getExperiments = (query: ExperimentsQuery) => {
+  const params = new URLSearchParams({
+    page: String(query.page),
+    per_page: String(query.per_page),
+    sort: query.sort,
+  });
+  const search = query.search.trim();
+  const status = query.status.trim();
+  if (search) params.set("search", search);
+  if (status) params.set("status", status);
+  return request<ExperimentsResponse>(`/experiments?${params.toString()}`);
+};
+
+export type DashboardStatus = ExperimentStatus;
+export type DashboardQuery = {
+  from: string;
+  to: string;
+  search: string;
+  status: "" | DashboardStatus;
+  sort:
+    | "created_at:desc"
+    | "created_at:asc"
+    | "name:asc"
+    | "name:desc"
+    | "result_count:desc";
+  page: number;
+  per_page: number;
+};
+export type DashboardResponse = {
+  range: { from: string; to: string };
+  kpis: { total: number; running: number; completed: number; results: number };
+  daily: {
+    date: string;
+    experiments: number;
+    results: number;
+    metric_average: number | null;
+  }[];
+  statuses: { status: DashboardStatus; count: number }[];
+  items: {
+    id: string;
+    name: string;
+    status: DashboardStatus;
+    created_at: string;
+    result_count: number;
+    latest_metric: number | null;
+  }[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+};
+export const getDashboard = (query: DashboardQuery) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query))
+    params.set(key, String(value));
+  return request<DashboardResponse>(`/dashboard?${params.toString()}`);
+};
 export const getExperiment = (id: string) =>
   request<Experiment>(`/experiments/${id}`);
 export const createExperiment = (name: string) =>
@@ -266,12 +333,35 @@ export const appendExperimentResult = (
   });
 
 export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
+export type DocumentsQuery = {
+  page: number;
+  per_page: number;
+  search: string;
+  status: "" | DocumentStatus;
+  sort: "name:asc" | "name:desc" | "status:asc" | "status:desc";
+};
+export type DocumentsResponse = {
+  items: Document[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+};
 export type Document = {
   id: string;
   name: string;
   content_type?: string;
   size_bytes?: number;
   ingestion_status: DocumentStatus;
+};
+export type DocumentDetail = Document & {
+  active_chunk_count: number;
+  latest_run: {
+    status: DocumentStatus;
+    chunk_count: number;
+    created_at: string;
+    error: string | null;
+  } | null;
 };
 export type Citation = {
   chunk_id: string;
@@ -281,6 +371,20 @@ export type Citation = {
   content: string;
   distance?: number;
 };
+export const getDocuments = (query: DocumentsQuery) => {
+  const params = new URLSearchParams({
+    page: String(query.page),
+    per_page: String(query.per_page),
+    sort: query.sort,
+  });
+  const search = query.search.trim();
+  const status = query.status.trim();
+  if (search) params.set("search", search);
+  if (status) params.set("status", status);
+  return request<DocumentsResponse>(`/documents?${params.toString()}`);
+};
+export const getDocument = (id: string) =>
+  request<DocumentDetail>(`/documents/${encodeURIComponent(id)}`);
 export const uploadDocument = (file: File) => {
   const body = new FormData();
   body.append("file", file);

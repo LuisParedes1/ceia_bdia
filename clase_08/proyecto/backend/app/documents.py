@@ -13,9 +13,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Cookie, Depends, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Cookie, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
 from minio import Minio
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, Integer, String, bindparam, column, select, table, text
@@ -40,6 +40,100 @@ _embeddings = table(
     "embeddings", column("tenant_id"), column("chunk_id"),
     column("embedding", Vector(settings.embedding_dimension))
 )
+
+
+DocumentStatus = Literal["pending", "processing", "ready", "failed"]
+DocumentSort = Literal["name:asc", "name:desc", "status:asc", "status:desc"]
+
+
+class DocumentListQuery(BaseModel):
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=10, ge=1, le=50)
+    search: str | None = Field(default=None, max_length=200)
+    status: DocumentStatus | None = None
+    sort: DocumentSort = "name:asc"
+
+    @field_validator("search", mode="before")
+    @classmethod
+    def trim_search(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
+
+
+def _like_pattern(search: str | None) -> str | None:
+    if search is None:
+        return None
+    return "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+_DOCUMENT_LIST_COUNT = text("""
+    SELECT count(*) AS total
+    FROM documents
+    WHERE tenant_id = CAST(:tenant AS uuid)
+      AND (CAST(:status AS varchar) IS NULL OR ingestion_status = CAST(:status AS varchar))
+      AND (CAST(:search AS varchar) IS NULL OR name ILIKE CAST(:search AS varchar) ESCAPE '\\')
+""")
+_DOCUMENT_LIST_ITEMS = text("""
+    SELECT id, name, content_type, size_bytes, ingestion_status
+    FROM documents
+    WHERE tenant_id = CAST(:tenant AS uuid)
+      AND (CAST(:status AS varchar) IS NULL OR ingestion_status = CAST(:status AS varchar))
+      AND (CAST(:search AS varchar) IS NULL OR name ILIKE CAST(:search AS varchar) ESCAPE '\\')
+    ORDER BY
+      CASE WHEN CAST(:sort AS varchar) = 'name:asc' THEN name END ASC,
+      CASE WHEN CAST(:sort AS varchar) = 'name:desc' THEN name END DESC,
+      CASE WHEN CAST(:sort AS varchar) = 'status:asc' THEN ingestion_status END ASC,
+      CASE WHEN CAST(:sort AS varchar) = 'status:desc' THEN ingestion_status END DESC,
+      id ASC
+    LIMIT CAST(:limit AS integer) OFFSET CAST(:offset AS integer)
+""")
+
+
+def _document_list_statements(query: DocumentListQuery, tenant: UUID):
+    filters = (
+        bindparam("tenant", value=tenant),
+        bindparam("status", value=query.status, type_=String()),
+        bindparam("search", value=_like_pattern(query.search), type_=String()),
+    )
+    return (
+        _DOCUMENT_LIST_COUNT.bindparams(*filters),
+        _DOCUMENT_LIST_ITEMS.bindparams(
+            *filters,
+            bindparam("sort", value=query.sort, type_=String()),
+            bindparam("limit", value=query.per_page, type_=Integer()),
+            bindparam("offset", value=(query.page - 1) * query.per_page, type_=Integer()),
+        ),
+    )
+
+
+_DOCUMENT_DETAIL = text("""
+    SELECT id, name, content_type, size_bytes, ingestion_status
+    FROM documents
+    WHERE id = CAST(:document AS uuid) AND tenant_id = CAST(:tenant AS uuid)
+""")
+_DOCUMENT_ACTIVE_CHUNKS = text("""
+    SELECT count(*) AS active_chunk_count
+    FROM chunks
+    WHERE tenant_id = CAST(:tenant AS uuid)
+      AND document_id = CAST(:document AS uuid)
+      AND active = true
+""")
+_DOCUMENT_LATEST_RUN = text("""
+    SELECT status, chunk_count, created_at, error
+    FROM ingestion_runs
+    WHERE tenant_id = CAST(:tenant AS uuid) AND document_id = CAST(:document AS uuid)
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+""")
+
+
+def _document_detail_statements(document_id: UUID, tenant: UUID):
+    parameters = (
+        bindparam("document", value=document_id),
+        bindparam("tenant", value=tenant),
+    )
+    return tuple(statement.bindparams(*parameters) for statement in (
+        _DOCUMENT_DETAIL, _DOCUMENT_ACTIVE_CHUNKS, _DOCUMENT_LATEST_RUN,
+    ))
 
 
 def _retrieval_statement(vector: list[float], tenant: UUID, limit: int):
@@ -119,6 +213,7 @@ class FixedEmbeddingProvider:
         except Exception as exc: raise RuntimeError("embedding provider unavailable") from exc
         if len(vector) != self.dimension or any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) for item in vector):
             raise RuntimeError("embedding provider returned a malformed vector")
+        # pi-lens-ignore: unchecked-throwing-call-python
         return [float(item) for item in vector]
 
 
@@ -139,6 +234,7 @@ class HTTPEmbeddingProvider:
         vector = payload.get("vector")
         if not isinstance(vector, list) or len(vector) != self.dimension or any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) for item in vector):
             raise RuntimeError("embedding provider returned a malformed vector")
+        # pi-lens-ignore: unchecked-throwing-call-python
         return [float(item) for item in vector]
 
 
@@ -176,6 +272,80 @@ def _set_context(db: Session, state: dict, tenant: UUID) -> None:
 def _authorize(db: Session, raw_session: str | None, roles: set[str]) -> tuple[dict, UUID]:
     state = _session(db, raw_session); db.commit()
     return state, _tenant_context(db, state, roles)
+
+
+@router.get("")
+def list_documents(
+    query: Annotated[DocumentListQuery, Query()],
+    session_token: Annotated[str | None, Cookie()] = None,
+    db: Session = Depends(db_session),
+) -> dict:
+    state, tenant = _authorize(db, session_token, {"admin", "member", "viewer"})
+    count, items = _document_list_statements(query, tenant)
+    try:
+        with db.begin():
+            _set_context(db, state, tenant)
+            total = int(db.execute(count).scalar_one())
+            rows = db.execute(items).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.exception("Document list database query failed", extra={"tenant_id": str(tenant)})
+        raise HTTPException(503, "Document list is unavailable.") from exc
+    return {
+        "items": [
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "content_type": row["content_type"],
+                "size_bytes": row["size_bytes"],
+                "ingestion_status": row["ingestion_status"],
+            }
+            for row in rows
+        ],
+        "total": total,
+        "page": query.page,
+        "per_page": query.per_page,
+        "pages": math.ceil(total / query.per_page),
+    }
+
+
+@router.get("/{document_id}")
+def get_document(
+    document_id: UUID,
+    session_token: Annotated[str | None, Cookie()] = None,
+    db: Session = Depends(db_session),
+) -> dict:
+    state, tenant = _authorize(db, session_token, {"admin", "member", "viewer"})
+    document, chunks, latest_run = _document_detail_statements(document_id, tenant)
+    try:
+        with db.begin():
+            _set_context(db, state, tenant)
+            # pi-lens-ignore: python-sql-injection
+            row = db.execute(document).mappings().first()
+            if not row:
+                raise HTTPException(404, "Document not found.")
+            # pi-lens-ignore: python-sql-injection
+            active_chunk_count = int(db.execute(chunks).scalar_one())
+            # pi-lens-ignore: python-sql-injection
+            latest = db.execute(latest_run).mappings().first()
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        logger.exception("Document detail database query failed", extra={"tenant_id": str(tenant)})
+        raise HTTPException(503, "Document detail is unavailable.") from exc
+    return {
+        "id": str(row["id"]),
+        "name": row["name"],
+        "content_type": row["content_type"],
+        "size_bytes": row["size_bytes"],
+        "ingestion_status": row["ingestion_status"],
+        "active_chunk_count": active_chunk_count,
+        "latest_run": None if latest is None else {
+            "status": latest["status"],
+            "chunk_count": latest["chunk_count"],
+            "created_at": latest["created_at"],
+            "error": latest["error"],
+        },
+    }
 
 
 @router.post("", status_code=201)
@@ -234,7 +404,7 @@ def ingest_document(document_id: UUID, request: Request, session_token: Annotate
             if sha256(data).hexdigest() != row["sha256"]: raise RuntimeError("stored object integrity mismatch")
             parts = chunk_text(extract_text(data, row["content_type"]))
             vectors = [embedding_provider.embed(part, "passage") for part in parts]
-            db.execute(text("UPDATE chunks SET active=false WHERE tenant_id=:tenant AND document_id=:document"), {"tenant": tenant, "document": document_id})
+            db.execute(text("DELETE FROM chunks WHERE tenant_id=:tenant AND document_id=:document"), {"tenant": tenant, "document": document_id})
             for ordinal, (part, vector) in enumerate(zip(parts, vectors, strict=True)):
                 chunk_id = uuid4()
                 db.execute(text("INSERT INTO chunks (id,tenant_id,document_id,content,ordinal,active) VALUES (:id,:tenant,:document,:content,:ordinal,true)"), {"id": chunk_id, "tenant": tenant, "document": document_id, "content": part, "ordinal": ordinal})
@@ -243,26 +413,32 @@ def ingest_document(document_id: UUID, request: Request, session_token: Annotate
             db.execute(text("INSERT INTO ingestion_runs (id,tenant_id,document_id,status,chunk_count) VALUES (:id,:tenant,:document,'ready',:count)"), {"id": uuid4(), "tenant": tenant, "document": document_id, "count": len(parts)})
     except HTTPException: raise
     except Exception as exc:
-        try:
-            db.rollback()
-            with db.begin():
-                _set_context(db, state, tenant)
-                db.execute(text("UPDATE documents SET ingestion_status='failed' WHERE id=:id AND tenant_id=:tenant"), {"id": document_id, "tenant": tenant})
-                db.execute(text("INSERT INTO ingestion_runs (id,tenant_id,document_id,status,error) VALUES (:id,:tenant,:document,'failed','Dependency or content failure')"), {"id": uuid4(), "tenant": tenant, "document": document_id})
-        except Exception as cleanup_exc:
-            try:
-                db.rollback()
-            except Exception:
-                logger.exception(
-                    "Failed to roll back after document ingestion cleanup failure",
-                    extra={"document_id": str(document_id), "tenant_id": str(tenant)},
-                )
             logger.error(
-                "Failed to record document ingestion failure",
-                exc_info=cleanup_exc,
+                "Document ingestion failed (%s)",
+                type(exc).__name__,
                 extra={"document_id": str(document_id), "tenant_id": str(tenant)},
             )
-        raise HTTPException(503, "Document ingestion failed closed.") from exc
+            try:
+                db.rollback()
+                with db.begin():
+                    _set_context(db, state, tenant)
+                    db.execute(text("UPDATE documents SET ingestion_status='failed' WHERE id=:id AND tenant_id=:tenant"), {"id": document_id, "tenant": tenant})
+                    db.execute(text("INSERT INTO ingestion_runs (id,tenant_id,document_id,status,error) VALUES (:id,:tenant,:document,'failed','Dependency or content failure')"), {"id": uuid4(), "tenant": tenant, "document": document_id})
+            except Exception as cleanup_exc:
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception(
+                        "Failed to roll back after document ingestion cleanup failure",
+                        extra={"document_id": str(document_id), "tenant_id": str(tenant)},
+                    )
+                logger.error(
+                    "Failed to record document ingestion failure",
+                    exc_info=cleanup_exc,
+                    extra={"document_id": str(document_id), "tenant_id": str(tenant)},
+                )
+            raise HTTPException(503, "Document ingestion failed closed.") from exc
+
     return {"id": str(document_id), "ingestion_status": "ready", "chunk_count": len(parts)}
 
 
@@ -283,4 +459,22 @@ def retrieve(payload: RetrievalRequest, session_token: Annotated[str | None, Coo
     except SQLAlchemyError as exc:
         logger.exception("Document retrieval database query failed", extra={"tenant_id": str(tenant)})
         raise HTTPException(503, "Document retrieval is unavailable.") from exc
-    return {"citations": [{"chunk_id": str(row["id"]), "document_id": str(row["document_id"]), "document_name": row["name"], "ordinal": row["ordinal"], "content": row["content"], "distance": float(row["distance"])} for row in rows]}
+    try:
+        citations = [
+            {
+                "chunk_id": str(row["id"]),
+                "document_id": str(row["document_id"]),
+                "document_name": row["name"],
+                "ordinal": row["ordinal"],
+                "content": row["content"],
+                "distance": float(row["distance"]),
+            }
+            for row in rows
+        ]
+    except (TypeError, ValueError) as exc:
+        logger.exception(
+            "Document retrieval returned an invalid distance",
+            extra={"tenant_id": str(tenant)},
+        )
+        raise HTTPException(503, "Document retrieval returned invalid data.") from exc
+    return {"citations": citations}

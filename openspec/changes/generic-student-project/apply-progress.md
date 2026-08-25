@@ -167,7 +167,7 @@ Runtime harness: **N/A on this machine**. `docker compose ps -a` could not acces
 - Used isolated Compose project `gsp-pr4-verify` and an ephemeral `/tmp/gsp-pr4-verify.env`; no existing volume or data was removed. Only `db`, `minio`, `minio-init`, `mailpit`, and `api` were started.
 - Command: `docker compose -p gsp-pr4-verify --env-file /tmp/gsp-pr4-verify.env up -d db minio minio-init mailpit` — PASS: database, MinIO, and Mailpit became healthy; MinIO initialization exited 0.
 - Commands: `docker compose ... build api`; `docker compose ... run --rm --no-deps api alembic upgrade head`; `docker compose ... exec -T db psql -U project_migrator -d student_project -Atc 'SELECT version_num FROM alembic_version;'` — PASS: all revisions ran and returned `20260330_07`.
-- Commands: `docker compose ... up -d api`; `curl -fsS http://127.0.0.1:18000/health` — PASS: API healthy and returned `{"status":"ok","service":"generic-student-api"}`.
+- Commands: `docker compose ... up -d api`; `curl -fsS http://127.0.0.1:18000/health` — PASS: API healthy and returned `{"status":"ok","service":"project-api"}`.
 
 ### Live HTTP and PostgreSQL evidence
 
@@ -268,7 +268,7 @@ The seven exact unchecked implementation-owned rows remain the PR 5 storage task
 | `python -m compileall -q app tests migrations` with isolated bytecode path | PASS. |
 | `npx --yes pyright --pythonpath /tmp/gsp-pr5-venv/bin/python` | PASS: 0 errors, 0 warnings. |
 | `docker compose -p gsp-pr5-verify --env-file .env.example config -q` and isolated API build | PASS. |
-| Clean isolated migration through `20260330_08` | PASS on pgvector/PostgreSQL; API health returned `{"status":"ok","service":"generic-student-api"}`. |
+| Clean isolated migration through `20260330_08` | PASS on pgvector/PostgreSQL; API health returned `{"status":"ok","service":"project-api"}`. |
 | Live two-tenant API/MinIO scenario | PASS: each tenant uploaded identical TXT content; tenant A bytes matched the original with `cmp`; tenant B guessed A's document UUID and received 404; anonymous direct MinIO GET received 403. |
 | Live PDF, TXT, and Markdown ingestion | PASS: all three returned `ready`; generated PDF and Markdown each produced one active chunk. JSON MIME/extension was denied with 415; a 25 MiB + 1 byte TXT was denied with 413. |
 | Live colliding-vector retrieval | PASS: PostgreSQL proved two tenant owners with one identical vector; tenant A retrieval returned one A citation and no B document/context. `embeddings` had RLS+FORCE RLS and `app_runtime.rolbypassrls=false`. |

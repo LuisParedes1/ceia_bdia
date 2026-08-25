@@ -39,6 +39,7 @@ import { UsersPage } from "./admin/UsersPage";
 import { ExperimentsPage } from "./experiments/ExperimentsPage";
 import { DocumentsPage } from "./documents/DocumentsPage";
 import { AssistantPage } from "./assistant/AssistantPage";
+import { DashboardPage } from "./dashboard/DashboardPage";
 
 type Auth = {
   session: Session | null;
@@ -168,23 +169,6 @@ function MainLayout({ children }: { children: ReactNode }) {
         onConfirm={end}
       />
     </div>
-  );
-}
-function Page({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <>
-      <div className="page-header">
-        <div>
-          <h1>{title}</h1>
-          <p className="muted">Espacio de trabajo actual</p>
-        </div>
-      </div>
-      {children ?? (
-        <section className="notice">
-          <p>Esta sección estará disponible en la próxima entrega.</p>
-        </section>
-      )}
-    </>
   );
 }
 type AuthMode = "login" | "register" | "request" | "confirm";
@@ -502,7 +486,7 @@ function AppRoutes() {
                   path="/"
                   element={<Navigate to="/dashboard" replace />}
                 />
-                <Route path="/dashboard" element={<Page title="Panel" />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/users" element={<UsersRoute />} />
                 <Route path="/experiments" element={<ExperimentsRoute />} />
                 <Route path="/documents" element={<DocumentsRoute />} />

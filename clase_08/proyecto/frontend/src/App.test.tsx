@@ -170,18 +170,20 @@ describe("application routes", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    "/reset-password",
-    "/reset-password?token=",
-  ])("keeps %s on the confirmation form with a manual code fallback", async (path) => {
-    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
-    renderAt(path);
+  it.each(["/reset-password", "/reset-password?token="])(
+    "keeps %s on the confirmation form with a manual code fallback",
+    async (path) => {
+      vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+      renderAt(path);
 
-    expect(
-      await screen.findByRole("heading", { name: "Guardar contraseña" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Código de recuperación")).toBeInTheDocument();
-  });
+      expect(
+        await screen.findByRole("heading", { name: "Guardar contraseña" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Código de recuperación"),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("keeps an invalid linked-token API error on the confirmation form in Spanish", async () => {
     vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
@@ -285,17 +287,16 @@ describe("application routes", () => {
     expect(screen.getByRole("heading", { name: "Panel" })).toBeInTheDocument();
   });
 
-  it.each([
-    "/login",
-    "/register",
-    "/recovery",
-  ])("redirects authenticated users from %s to the dashboard", async (path) => {
-    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
-    renderAt(path);
-    expect(
-      await screen.findByRole("heading", { name: "Panel" }),
-    ).toBeInTheDocument();
-  });
+  it.each(["/login", "/register", "/recovery"])(
+    "redirects authenticated users from %s to the dashboard",
+    async (path) => {
+      vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+      renderAt(path);
+      expect(
+        await screen.findByRole("heading", { name: "Panel" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("keeps recovery confirmation available to authenticated users", async () => {
     vi.mocked(getSession).mockResolvedValueOnce(adminSession);
@@ -382,6 +383,9 @@ describe("users directory", () => {
     );
     expect(container.querySelector("table")).toBeInTheDocument();
     expect(container.querySelector(".member-cards")).toBeInTheDocument();
+    expect(
+      container.querySelector(".pagination-page-size > label + select"),
+    ).toBeInTheDocument();
   });
 
   it("uses URL filters, opens details, handles loading/error/retry, and creates a valid member", async () => {
@@ -457,15 +461,18 @@ describe("auth presentation and theme", () => {
     ["/register", "nombre@equipo.edu", "Mínimo 8 caracteres", "Crear espacio"],
     ["/recovery", "nombre@equipo.edu", null, "Enviar instrucciones"],
     ["/recovery/confirm", null, "Mínimo 8 caracteres", "Guardar contraseña"],
-  ])("uses the required %s labels and placeholders", async (path, email, password, submit) => {
-    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
-    renderAt(path);
-    if (email)
-      expect(await screen.findByPlaceholderText(email)).toBeInTheDocument();
-    if (password)
-      expect(screen.getByPlaceholderText(password)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
-  });
+  ])(
+    "uses the required %s labels and placeholders",
+    async (path, email, password, submit) => {
+      vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+      renderAt(path);
+      if (email)
+        expect(await screen.findByPlaceholderText(email)).toBeInTheDocument();
+      if (password)
+        expect(screen.getByPlaceholderText(password)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
+    },
+  );
 
   it("toggles each password field visibility independently and restores its masked type", async () => {
     vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));

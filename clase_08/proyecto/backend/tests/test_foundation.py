@@ -30,7 +30,7 @@ class BackendFoundationTests(unittest.TestCase):
 
         self.assertEqual(
             health_check(),
-            {"status": "ok", "service": "generic-student-api"},
+            {"status": "ok", "service": "project-api"},
         )
 
     def test_error_handlers_localize_framework_validation_and_internal_errors(self) -> None:

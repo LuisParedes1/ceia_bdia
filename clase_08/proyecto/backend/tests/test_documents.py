@@ -24,10 +24,25 @@ os.environ.update({
 
 from app.documents import (AuthorizedAsset, FixedEmbeddingProvider, HTTPEmbeddingProvider,
                            MinioObjectStore, RetrievalRequest, _retrieval_statement, chunk_text,
-                           extract_text, ingest_document, retrieve)
+                           _document_detail_statements, extract_text, get_document, ingest_document, retrieve)
 
 
 class DocumentContracts(unittest.TestCase):
+    def test_document_detail_uses_tenant_bound_statements_and_returns_latest_run(self) -> None:
+        tenant, document_id, user_id = uuid4(), uuid4(), uuid4()
+        statements = _document_detail_statements(document_id, tenant)
+        self.assertEqual(len(statements), 3)
+        self.assertTrue(all("tenant" in str(statement) and "document" in str(statement) for statement in statements))
+        db = MagicMock()
+        document = MagicMock(); document.mappings.return_value.first.return_value = {"id": document_id, "name": "guide.md", "content_type": "text/markdown", "size_bytes": 12, "ingestion_status": "ready"}
+        chunks = MagicMock(); chunks.scalar_one.return_value = 2
+        latest = MagicMock(); latest.mappings.return_value.first.return_value = {"status": "ready", "chunk_count": 2, "created_at": "2026-03-30T10:00:00Z", "error": None}
+        db.execute.side_effect = [document, chunks, latest]
+        with (patch("app.documents._authorize", return_value=({"user_id": user_id}, tenant)), patch("app.documents._set_context")):
+            response = get_document(document_id, db=db)
+        self.assertEqual(response["active_chunk_count"], 2)
+        self.assertEqual(response["latest_run"]["chunk_count"], 2)
+
     def test_private_store_requires_authorized_capability_and_preserves_bytes(self) -> None:
         client = Mock(); client.get_object.return_value = BytesIO(b"original")
         store = MinioObjectStore(client, "private")
@@ -109,6 +124,34 @@ class DocumentContracts(unittest.TestCase):
         self.assertIs(log_error.call_args.kwargs["exc_info"], cleanup_error)
         log_exception.assert_called_once()
 
+    def test_ingestion_embedding_failure_happens_before_chunk_replacement(self) -> None:
+        tenant, document_id = uuid4(), uuid4()
+        db = MagicMock()
+        row = MagicMock()
+        row.mappings.return_value.first.return_value = {
+            "object_key": "opaque-key",
+            "content_type": "text/plain",
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        }
+
+        def execute(statement, *_args, **_kwargs):
+            return row if "SELECT object_key" in str(statement) else MagicMock()
+
+        db.execute.side_effect = execute
+        with (patch("app.documents._session", return_value={"user_id": uuid4()}),
+              patch("app.documents._csrf"),
+              patch("app.documents._tenant_context", return_value=tenant),
+              patch("app.documents._set_context"),
+              patch("app.documents._store") as store,
+              patch("app.documents.embedding_provider.embed", side_effect=RuntimeError("offline"))):
+            store.return_value.get.return_value = b"hello"
+            with self.assertRaises(HTTPException) as raised:
+                ingest_document(document_id, Mock(), db=db)
+
+        self.assertEqual(raised.exception.status_code, 503)
+        statements = [str(call.args[0]) for call in db.execute.call_args_list]
+        self.assertNotIn("DELETE FROM chunks", "\n".join(statements))
+
     def test_retrieval_database_failure_is_logged_and_returns_safe_service_error(self) -> None:
         tenant = uuid4()
         database_error = SQLAlchemyError("secret database details")
@@ -131,6 +174,35 @@ class DocumentContracts(unittest.TestCase):
             "Document retrieval database query failed",
             extra={"tenant_id": str(tenant)},
         )
+
+    def test_retrieval_distance_conversion_fails_closed_and_keeps_valid_citations(self) -> None:
+        tenant = uuid4()
+        row = {
+            "id": uuid4(),
+            "document_id": uuid4(),
+            "name": "retrieved.txt",
+            "ordinal": 0,
+            "content": "retrieved content",
+        }
+
+        for invalid_distance in ("not-a-number", None):
+            with self.subTest(distance=invalid_distance):
+                db = MagicMock()
+                db.execute.return_value.mappings.return_value.all.return_value = [{**row, "distance": invalid_distance}]
+                with (patch("app.documents._authorize", return_value=({"user_id": uuid4()}, tenant)),
+                      patch("app.documents._set_context"),
+                      patch("app.documents.embedding_provider.embed", return_value=[0.0] * 384)):
+                    with self.assertRaises(HTTPException) as raised:
+                        retrieve(RetrievalRequest(query="bounded query"), db=db)
+                self.assertEqual((raised.exception.status_code, raised.exception.detail), (503, "Document retrieval returned invalid data."))
+
+        db = MagicMock()
+        db.execute.return_value.mappings.return_value.all.return_value = [{**row, "distance": "0.125"}]
+        with (patch("app.documents._authorize", return_value=({"user_id": uuid4()}, tenant)),
+              patch("app.documents._set_context"),
+              patch("app.documents.embedding_provider.embed", return_value=[0.0] * 384)):
+            response = retrieve(RetrievalRequest(query="bounded query"), db=db)
+        self.assertEqual(response["citations"][0]["distance"], 0.125)
 
     def test_retrieval_statement_uses_structured_bounded_tenant_query(self) -> None:
         tenant = uuid4()

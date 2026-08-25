@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiErrorMessage, createMember, getSession } from "./api";
+import {
+  apiErrorMessage,
+  createMember,
+  getExperiments,
+  getDocuments,
+  getDocument,
+  getSession,
+} from "./api";
 
 beforeEach(() => {
   document.cookie = "csrf_token=token; path=/";
@@ -29,6 +36,101 @@ describe("cookie API client", () => {
     expect(fetcher.mock.calls[0][1]?.headers).not.toHaveProperty(
       "x-csrf-token",
     );
+  });
+
+  it("omits empty experiment filters while preserving pagination and sorting", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await getExperiments({
+      page: 2,
+      per_page: 25,
+      search: "",
+      status: "",
+      sort: "created_at:desc",
+    });
+
+    const url = new URL(String(fetcher.mock.calls[0][0]), "http://localhost");
+    expect(url.searchParams.has("status")).toBe(false);
+    expect(url.searchParams.has("search")).toBe(false);
+    expect(url.searchParams.get("page")).toBe("2");
+    expect(url.searchParams.get("per_page")).toBe("25");
+    expect(url.searchParams.get("sort")).toBe("created_at:desc");
+  });
+
+  it("omits empty document filters while preserving pagination and sorting", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await getDocuments({
+      page: 2,
+      per_page: 20,
+      search: " ",
+      status: "",
+      sort: "name:asc",
+    });
+
+    const url = new URL(String(fetcher.mock.calls[0][0]), "http://localhost");
+    expect(url.searchParams.has("status")).toBe(false);
+    expect(url.searchParams.has("search")).toBe(false);
+    expect(url.searchParams.get("page")).toBe("2");
+    expect(url.searchParams.get("per_page")).toBe("20");
+    expect(url.searchParams.get("sort")).toBe("name:asc");
+  });
+
+  it("encodes the document identifier for detail requests", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await getDocument("document/id");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/documents/document%2Fid",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("serializes nonempty document filters", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await getDocuments({
+      page: 1,
+      per_page: 10,
+      search: "guía",
+      status: "ready",
+      sort: "status:desc",
+    });
+
+    const url = new URL(String(fetcher.mock.calls[0][0]), "http://localhost");
+    expect(url.searchParams.get("search")).toBe("guía");
+    expect(url.searchParams.get("status")).toBe("ready");
+    expect(url.searchParams.get("sort")).toBe("status:desc");
+  });
+
+  it("serializes nonempty experiment filters", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await getExperiments({
+      page: 1,
+      per_page: 10,
+      search: "baseline run",
+      status: "running",
+      sort: "name:asc",
+    });
+
+    const url = new URL(String(fetcher.mock.calls[0][0]), "http://localhost");
+    expect(url.searchParams.get("search")).toBe("baseline run");
+    expect(url.searchParams.get("status")).toBe("running");
+    expect(url.searchParams.get("page")).toBe("1");
+    expect(url.searchParams.get("per_page")).toBe("10");
+    expect(url.searchParams.get("sort")).toBe("name:asc");
   });
 
   it.each([

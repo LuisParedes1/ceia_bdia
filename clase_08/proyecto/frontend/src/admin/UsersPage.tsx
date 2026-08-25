@@ -6,11 +6,13 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Info,
   Plus,
   Search,
 } from "lucide-react";
 import * as api from "../api";
 import { Badge } from "../components/ui/badge";
+import { RowActions } from "../components/custom/RowActions";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -229,9 +231,10 @@ function Pagination({
   return (
     <nav className="pagination" aria-label="Paginación de personas">
       <span>{result.total} personas</span>
-      <label>
-        Filas por página
+      <div className="pagination-page-size">
+        <label htmlFor="members-per-page">Filas por página</label>
         <select
+          id="members-per-page"
           value={result.per_page}
           onChange={(event) =>
             update({ per_page: Number(event.target.value), page: 1 })
@@ -241,7 +244,7 @@ function Pagination({
             <option key={size}>{size}</option>
           ))}
         </select>
-      </label>
+      </div>
       <span>
         Página {result.page} de {result.pages || 1}
       </span>
@@ -343,10 +346,16 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
       <TableCell>
         <Badge>{passwordLabel(member)}</Badge>
       </TableCell>
-      <TableCell>
-        <Button variant="outline" onClick={() => setSelected(member)}>
-          Ver detalles
-        </Button>
+      <TableCell className="actions-cell">
+        <RowActions
+          actions={[
+            {
+              label: "Ver detalles",
+              icon: Info,
+              onClick: () => setSelected(member),
+            },
+          ]}
+        />
       </TableCell>
     </TableRow>
   );
@@ -490,7 +499,7 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
                     <TableHead>Rol</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>Configuración</TableHead>
-                    <TableHead>Acciones</TableHead>
+                    <TableHead className="actions-cell">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>{result.items.map(rows)}</TableBody>
@@ -503,9 +512,15 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
                   <div>
                     <MemberLabels member={member} />
                   </div>
-                  <Button variant="outline" onClick={() => setSelected(member)}>
-                    Ver detalles
-                  </Button>
+                  <RowActions
+                    actions={[
+                      {
+                        label: "Ver detalles",
+                        icon: Info,
+                        onClick: () => setSelected(member),
+                      },
+                    ]}
+                  />
                 </article>
               ))}
             </div>

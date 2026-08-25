@@ -11,7 +11,7 @@ import requests
 from app.assistant.sql import SqlGuard, SqlRejected
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_PLACEHOLDERS = {"", "changeme", "change-me", "replace-me", "your-api-key", "sk-or-v1-placeholder"}
+_PLACEHOLDERS = {"", "changeme", "change-me", "replace-me", "your-api-key", "sk-or-v1-placeholder"}  # gitleaks:allow -- rejected examples, never credentials
 _SENSITIVE_KEYS = {"tenant_id", "object_key", "session", "session_token", "authorization", "cookie", "error", "provider"}
 
 
