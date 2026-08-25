@@ -237,6 +237,74 @@ class IdentityHttpTests(unittest.TestCase):
         isolated = self.request("/api/experiments", headers={"Cookie": f"session_token={other_session}"})
         self.assertEqual((isolated[0], isolated[2]["total"]), (200, 0))
 
+    def test_experiment_archive_restore_http_contract(self) -> None:
+        status, headers, owner = self.request(
+            "/api/auth/register",
+            {"email": f"experiment-archive-owner-{uuid4()}@example.com", "password": "correct-horse", "tenant_name": "Experiment Archive Lab"},
+        )
+        self.assertEqual(status, 201)
+        session, csrf = self.cookies(headers)
+        authenticated = {"Cookie": f"session_token={session}"}
+        mutation_headers = self.csrf_headers(session, csrf)
+
+        terminal = self.request("/api/experiments", {"name": f"terminal {uuid4()}"}, mutation_headers)
+        self.assertEqual(terminal[0], 201)
+        experiment_id = terminal[2]["id"]
+        renamed = self.request(f"/api/experiments/{experiment_id}", {"name": "renamed terminal"}, mutation_headers, "PATCH")
+        self.assertEqual((renamed[0], renamed[2]["name"]), (200, "renamed terminal"))
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "running"}, mutation_headers, "PATCH")[0], 200)
+        result = self.request(
+            f"/api/experiments/{experiment_id}/results",
+            {"status": "completed", "terminal_status": "completed", "metrics": []},
+            mutation_headers,
+        )
+        self.assertEqual(result[0], 201)
+        before_archive = self.request(f"/api/experiments/{experiment_id}", headers=authenticated)
+        self.assertEqual((before_archive[0], before_archive[2]["status"], len(before_archive[2]["results"]), len(before_archive[2]["status_history"])), (200, "completed", 1, 2))
+
+        archived = self.request(f"/api/experiments/{experiment_id}", {"archived": True}, mutation_headers, "PATCH")
+        self.assertEqual((archived[0], archived[2]["status"], archived[2]["archived_by"]), (200, "completed", owner["user_id"]))
+        self.assertIsNotNone(archived[2]["archived_at"])
+        self.assertEqual(self.request("/api/experiments", headers=authenticated)[2]["total"], 0)
+        archived_list = self.request("/api/experiments?archived=true", headers=authenticated)
+        self.assertEqual((archived_list[0], archived_list[2]["total"], [item["id"] for item in archived_list[2]["items"]]), (200, 1, [experiment_id]))
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "failed"}, mutation_headers, "PATCH")[0], 409)
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}/results", {"status": "failed"}, mutation_headers)[0], 409)
+        after_archive = self.request(f"/api/experiments/{experiment_id}", headers=authenticated)
+        self.assertEqual((after_archive[2]["results"], after_archive[2]["status_history"]), (before_archive[2]["results"], before_archive[2]["status_history"]))
+
+        draft = self.request("/api/experiments", {"name": f"draft {uuid4()}"}, mutation_headers)
+        self.assertEqual(draft[0], 201)
+        self.assertEqual(self.request(f"/api/experiments/{draft[2]['id']}", {"archived": True}, mutation_headers, "PATCH")[0], 200)
+        self.assertEqual(self.request("/api/experiments", headers=authenticated)[2]["total"], 0)
+        self.assertEqual(self.request("/api/experiments?archived=true", headers=authenticated)[2]["total"], 2)
+
+        running = self.request("/api/experiments", {"name": f"running {uuid4()}"}, mutation_headers)
+        self.assertEqual(running[0], 201)
+        self.assertEqual(self.request(f"/api/experiments/{running[2]['id']}", {"status": "running"}, mutation_headers, "PATCH")[0], 200)
+        self.assertEqual(self.request(f"/api/experiments/{running[2]['id']}", {"archived": True}, mutation_headers, "PATCH")[0], 409)
+
+        _, other_headers, _ = self.request(
+            "/api/auth/register",
+            {"email": f"experiment-archive-other-{uuid4()}@example.com", "password": "correct-horse", "tenant_name": "Other Experiment Archive Lab"},
+        )
+        other_session, other_csrf = self.cookies(other_headers)
+        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"archived": False}, self.csrf_headers(other_session, other_csrf), "PATCH")[0], 404)
+
+        restored = self.request(f"/api/experiments/{experiment_id}", {"archived": False}, mutation_headers, "PATCH")
+        self.assertEqual((restored[0], restored[2]["archived_at"], restored[2]["archived_by"]), (200, None, None))
+        after_restore = self.request(f"/api/experiments/{experiment_id}", headers=authenticated)
+        self.assertEqual((after_restore[2]["results"], after_restore[2]["status_history"]), (before_archive[2]["results"], before_archive[2]["status_history"]))
+        self.assertEqual((self.request("/api/experiments", headers=authenticated)[2]["total"], self.request("/api/experiments?archived=true", headers=authenticated)[2]["total"]), (2, 1))
+
+        database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)", (owner["user_id"], owner["tenant_id"]))
+                cursor.execute("SELECT action, metadata FROM audit_events WHERE tenant_id=%s AND resource=%s AND action IN ('experiment_archived', 'experiment_restored') ORDER BY created_at", (owner["tenant_id"], f"experiment:{experiment_id}"))
+                audit_rows = cursor.fetchall()
+        self.assertEqual(audit_rows, [("experiment_archived", {"archived": True, "previous_archived": False}), ("experiment_restored", {"archived": False, "previous_archived": True})])
+
     def test_dashboard_live_contract_is_tenant_scoped_and_date_bounded(self) -> None:
         owner_email = f"dashboard-owner-{uuid4()}@example.com"
         status, headers, owner = self.request(

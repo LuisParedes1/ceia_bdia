@@ -69,6 +69,7 @@ describe("ExperimentsPage", () => {
       per_page: 20,
       search: "previo",
       status: "running",
+      archived: false,
       sort: "name:asc",
     });
 
@@ -81,6 +82,7 @@ describe("ExperimentsPage", () => {
         per_page: 20,
         search: "sin enviar",
         status: "running",
+        archived: false,
         sort: "name:asc",
       }),
     );
@@ -159,6 +161,7 @@ describe("ExperimentsPage", () => {
         per_page: 10,
         search: "",
         status: "",
+        archived: false,
         sort: "created_at:desc",
       }),
     );
@@ -177,6 +180,7 @@ describe("ExperimentsPage", () => {
         per_page: 20,
         search: "",
         status: "",
+        archived: false,
         sort: "created_at:desc",
       }),
     );
@@ -218,7 +222,7 @@ describe("ExperimentsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "La transición de estado no es válida.",
     );
-    expect(api.updateExperiment).toHaveBeenCalledWith("e1", "running");
+    expect(api.updateExperiment).toHaveBeenCalledWith("e1", { status: "running" });
   });
 
   it("appends a typed result and presents provenance", async () => {
@@ -314,6 +318,61 @@ describe("ExperimentsPage", () => {
             terminal_status: "completed",
           }),
         );
-        expect(api.updateExperiment).not.toHaveBeenCalled();
+            expect(api.updateExperiment).not.toHaveBeenCalled();
+          });
+
+      it("restores the archive scope from the URL and resets the page when changed", async () => {
+        vi.mocked(api.getExperiments).mockResolvedValue(page());
+        render(
+          <MemoryRouter initialEntries={["/experiments?page=2&per_page=20&search=previo&status=completed&sort=name%3Aasc&archived=true"]}>
+            <ExperimentsPage canMutate />
+          </MemoryRouter>,
+        );
+        expect(await screen.findByLabelText("Alcance de experimentos")).toHaveValue("archived");
+        expect(api.getExperiments).toHaveBeenLastCalledWith({ page: 2, per_page: 20, search: "previo", status: "completed", archived: true, sort: "name:asc" });
+        fireEvent.change(screen.getByLabelText("Alcance de experimentos"), { target: { value: "active" } });
+        await waitFor(() => expect(api.getExperiments).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, archived: false })));
       });
-});
+
+      it("supports rename, archive confirmation, and direct restore without lifecycle actions for archived experiments", async () => {
+        const archived = { ...experiment, archived_at: "2026-03-31T10:00:00Z", archived_by: "u1" };
+        vi.mocked(api.getExperiments).mockResolvedValue(page([experiment]));
+        vi.mocked(api.updateExperiment).mockResolvedValue(experiment);
+        const view = renderPage(true);
+        expect(await screen.findAllByRole("button", { name: "Editar nombre" })).toHaveLength(2);
+        fireEvent.click((await screen.findAllByRole("button", { name: "Editar nombre" }))[0]);
+        fireEvent.change(screen.getByLabelText("Nombre del experimento"), { target: { value: "  Renombrado  " } });
+        fireEvent.click(screen.getByRole("button", { name: "Guardar nombre" }));
+        await waitFor(() => expect(api.updateExperiment).toHaveBeenCalledWith("e1", { name: "Renombrado" }));
+        fireEvent.click((await screen.findAllByRole("button", { name: "Archivar experimento" }))[0]);
+        expect(screen.getByText(/historial y los resultados se conservan/i)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+        expect(api.updateExperiment).toHaveBeenCalledTimes(1);
+        fireEvent.click((await screen.findAllByRole("button", { name: "Archivar experimento" }))[0]);
+        fireEvent.click(screen.getByRole("button", { name: "Archivar" }));
+        await waitFor(() => expect(api.updateExperiment).toHaveBeenCalledWith("e1", { archived: true }));
+        view.unmount();
+        vi.mocked(api.getExperiments).mockResolvedValue(page([archived]));
+        renderPage(true);
+        fireEvent.click((await screen.findAllByRole("button", { name: "Restaurar experimento" }))[0]);
+        await waitFor(() => expect(api.updateExperiment).toHaveBeenCalledWith("e1", { archived: false }));
+        expect(screen.queryByRole("button", { name: "Iniciar experimento" })).not.toBeInTheDocument();
+      });
+
+      it("excludes archive for running experiments and hides lifecycle controls for archived detail", async () => {
+        const running = { ...experiment, status: "running" as const };
+        const archived = { ...experiment, archived_at: "2026-03-31T10:00:00Z", archived_by: "u1" };
+        vi.mocked(api.getExperiments).mockResolvedValue(page([running]));
+        renderPage(true);
+        await screen.findAllByText("Clasificador");
+        expect(screen.queryByRole("button", { name: "Archivar experimento" })).not.toBeInTheDocument();
+        cleanup();
+        vi.mocked(api.getExperiments).mockResolvedValue(page([archived]));
+        vi.mocked(api.getExperiment).mockResolvedValue({ ...archived, results: [] });
+        renderPage(true);
+        fireEvent.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+        await screen.findByText("Todavía no hay resultados registrados.");
+        expect(screen.queryByRole("button", { name: "Iniciar experimento" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Registrar resultado" })).not.toBeInTheDocument();
+      });
+    });

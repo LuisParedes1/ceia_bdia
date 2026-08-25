@@ -240,6 +240,8 @@ export type Experiment = {
   created_at: string;
   updated_at: string;
   creator_id: string;
+  archived_at?: string | null;
+  archived_by?: string | null;
   results?: ExperimentResult[];
 };
 export type ExperimentsResponse = {
@@ -261,6 +263,7 @@ export type ExperimentsQuery = {
   per_page: number;
   search: string;
   status: "" | ExperimentStatus;
+  archived: boolean;
   sort:
     | "created_at:desc"
     | "created_at:asc"
@@ -278,6 +281,7 @@ export const getExperiments = (query: ExperimentsQuery) => {
   const status = query.status.trim();
   if (search) params.set("search", search);
   if (status) params.set("status", status);
+  if (query.archived) params.set("archived", "true");
   return request<ExperimentsResponse>(`/experiments?${params.toString()}`);
 };
 
@@ -332,10 +336,15 @@ export const createExperiment = (name: string) =>
     method: "POST",
     body: JSON.stringify({ name }),
   });
-export const updateExperiment = (id: string, status: ExperimentStatus) =>
-  request<Experiment>(`/experiments/${id}`, {
+export type ExperimentUpdate = {
+  name?: string;
+  status?: ExperimentStatus;
+  archived?: boolean;
+};
+export const updateExperiment = (id: string, payload: ExperimentUpdate) =>
+  request<Experiment>(`/experiments/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(payload),
   });
 export const appendExperimentResult = (
   id: string,

@@ -6,13 +6,26 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Archive,
   Info,
+  Pencil,
   Play,
   Plus,
+  RotateCcw,
   Search,
 } from "lucide-react";
 import * as api from "../api";
 import { RowActions } from "../components/custom/RowActions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -44,6 +57,7 @@ const defaultQuery: api.ExperimentsQuery = {
   per_page: 10,
   search: "",
   status: "",
+  archived: false,
   sort: "created_at:desc",
 };
 const experimentSorts = new Set<api.ExperimentsQuery["sort"]>([
@@ -65,6 +79,7 @@ function queryFrom(params: URLSearchParams): api.ExperimentsQuery {
     status: ["draft", "running", "completed", "failed"].includes(status ?? "")
       ? (status as api.ExperimentStatus)
       : "",
+    archived: params.get("archived") === "true",
     sort: experimentSorts.has(sort as api.ExperimentsQuery["sort"])
       ? (sort as api.ExperimentsQuery["sort"])
       : defaultQuery.sort,
@@ -127,7 +142,7 @@ function ExperimentDialog({
     if (transitioning) return;
     setTransitioning(true);
     try {
-      await api.updateExperiment(experiment.id, status);
+      await api.updateExperiment(experiment.id, { status });
       onChanged();
       onClose();
     } catch (reason) {
@@ -347,8 +362,12 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
   const [search, setSearch] = useState(query.search);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [name, setName] = useState(""),
-    [creating, setCreating] = useState(false),
-    [selected, setSelected] = useState<api.Experiment | null>(null);
+        [creating, setCreating] = useState(false),
+        [selected, setSelected] = useState<api.Experiment | null>(null);
+      const [editing, setEditing] = useState<api.Experiment | null>(null);
+      const [editingName, setEditingName] = useState("");
+      const [archiving, setArchiving] = useState<api.Experiment | null>(null);
+      const [mutating, setMutating] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(query.search), 0);
     return () => window.clearTimeout(timer);
@@ -385,7 +404,26 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
     event.preventDefault();
     update({ search, page: 1 });
   };
-  const create = async (event: FormEvent) => {
+      const changeExperiment = async (
+        experiment: api.Experiment,
+        payload: api.ExperimentUpdate,
+      ) => {
+        if (mutating) return;
+        setMutating(true);
+        setError("");
+        try {
+          await api.updateExperiment(experiment.id, payload);
+          setEditing(null);
+          setArchiving(null);
+          setLoading(true);
+          setReload((value) => value + 1);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "No se pudo actualizar el experimento.");
+        } finally {
+          setMutating(false);
+        }
+      };
+      const create = async (event: FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
     try {
@@ -402,8 +440,34 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
       );
     }
   };
-  return (
-    <section className="experiments-page">
+      const actionsFor = (item: api.Experiment) => [
+        {
+          label: "Ver detalle",
+          icon: Info,
+          onClick: () => setSelected(item),
+          disabled: mutating,
+        },
+        ...(canMutate
+          ? [
+              {
+                label: "Editar nombre",
+                icon: Pencil,
+                onClick: () => {
+                  setEditing(item);
+                  setEditingName(item.name);
+                },
+                disabled: mutating,
+              },
+              ...(item.archived_at
+                ? [{ label: "Restaurar experimento", icon: RotateCcw, onClick: () => void changeExperiment(item, { archived: false }), disabled: mutating, busy: mutating }]
+                : item.status === "running"
+                  ? []
+                  : [{ label: "Archivar experimento", icon: Archive, onClick: () => setArchiving(item), disabled: mutating }]),
+            ]
+          : []),
+      ];
+      return (
+        <section className="experiments-page">
       <div className="page-header">
         <div>
           <h1>Experimentos</h1>
@@ -439,8 +503,19 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
           </Button>
         </form>
       )}
-      <form className="directory-toolbar" onSubmit={searchSubmit}>
-        <label className="search-field">
+        <form className="directory-toolbar" onSubmit={searchSubmit}>
+            <label>
+              Alcance de experimentos
+              <select
+                aria-label="Alcance de experimentos"
+                value={query.archived ? "archived" : "active"}
+                onChange={(event) => update({ archived: event.target.value === "archived", page: 1 })}
+              >
+                <option value="active">Activos</option>
+                <option value="archived">Archivados</option>
+              </select>
+            </label>
+            <label className="search-field">
           <span className="sr-only">Buscar experimentos</span>
           <Search />
           <input
@@ -544,15 +619,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
                     </TableCell>
                     <TableCell>{date(item.updated_at)}</TableCell>
                     <TableCell className="actions-cell">
-                      <RowActions
-                        actions={[
-                          {
-                            label: "Ver detalle",
-                            icon: Info,
-                            onClick: () => setSelected(item),
-                          },
-                        ]}
-                      />
+                      <RowActions actions={actionsFor(item)} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -565,15 +632,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
                 <strong>{item.name}</strong>
                 <Badge>{statusLabel[item.status]}</Badge>
                 <span className="muted">{date(item.updated_at)}</span>
-                <RowActions
-                  actions={[
-                    {
-                      label: "Ver detalle",
-                      icon: Info,
-                      onClick: () => setSelected(item),
-                    },
-                  ]}
-                />
+                <RowActions actions={actionsFor(item)} />
               </article>
             ))}
           </div>
@@ -634,7 +693,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
         </>
       ) : (
         <section className="notice">
-          {query.search || query.status || query.sort !== defaultQuery.sort ? (
+          {query.search || query.status || query.archived || query.sort !== defaultQuery.sort ? (
             "No hay experimentos que coincidan con los filtros."
           ) : (
             <>
@@ -646,10 +705,43 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
           )}
         </section>
       )}
-      <ExperimentDialog
-        key={selected?.id ?? "closed"}
+          {editing && (
+            <Dialog open onOpenChange={(open) => !open && !mutating && setEditing(null)}>
+              <DialogContent aria-describedby="edit-experiment-description">
+                <DialogTitle>Editar nombre</DialogTitle>
+                <DialogDescription id="edit-experiment-description">Actualizá el nombre del experimento.</DialogDescription>
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const nextName = editingName.trim();
+                  if (nextName) void changeExperiment(editing, { name: nextName });
+                }}>
+                  <FieldGroup>
+                    <Field>
+                      <label htmlFor="edit-experiment-name">Nombre del experimento</label>
+                      <input id="edit-experiment-name" value={editingName} onChange={(event) => setEditingName(event.target.value)} maxLength={200} required aria-invalid={!editingName.trim()} />
+                    </Field>
+                    <Button type="submit" disabled={mutating || !editingName.trim()}>Guardar nombre</Button>
+                  </FieldGroup>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
+          <AlertDialog open={Boolean(archiving)} onOpenChange={(open) => !open && !mutating && setArchiving(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Archivar experimento</AlertDialogTitle>
+                <AlertDialogDescription>El historial y los resultados se conservan. El experimento dejará de aparecer entre los activos.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={mutating}>Cancelar</AlertDialogCancel>
+                <AlertDialogAction disabled={mutating} onClick={() => archiving && void changeExperiment(archiving, { archived: true })}>Archivar</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <ExperimentDialog
+            key={selected?.id ?? "closed"}
         experiment={selected}
-        canMutate={canMutate}
+        canMutate={canMutate && !selected?.archived_at}
         onClose={() => setSelected(null)}
         onChanged={(changedExperiment) => {
           if (!changedExperiment) {

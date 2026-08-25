@@ -13,11 +13,27 @@ MetricType = Literal["number", "text", "boolean", "json"]
 class ExperimentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
 
 class ExperimentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     status: ExperimentStatus | None = None
+    archived: bool | None = None
     reason: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        return ExperimentCreate.strip_name(value)
 
     @field_validator("reason", mode="before")
     @classmethod
@@ -30,9 +46,11 @@ class ExperimentUpdate(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def reason_requires_status(self) -> "ExperimentUpdate":
+    def validate_update(self) -> "ExperimentUpdate":
         if self.reason is not None and self.status is None:
             raise ValueError("reason requires a status change")
+        if self.name is None and self.status is None and self.archived is None:
+            raise ValueError("an update requires name, status, or archived")
         return self
 
 

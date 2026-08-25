@@ -18,11 +18,25 @@ class ExperimentService:
         current = self.repository.get(tenant, experiment_id)
         if not current:
             return None
+        currently_archived = current.get("archived_at") is not None
+        if payload.archived is not None:
+            if payload.status is not None:
+                raise ValueError("archive changes cannot include a status transition")
+            if payload.archived == currently_archived:
+                raise ValueError("archive state is unchanged")
+            if payload.archived and current["status"] == "running":
+                raise ValueError("running experiments cannot be archived")
+        if currently_archived and payload.status is not None:
+            raise ValueError("archived experiments cannot change status")
+        if payload.name is not None and payload.name == current.get("name") and payload.status is None and payload.archived is None:
+            raise ValueError("experiment update is unchanged")
+        if payload.status is not None and payload.status == current["status"] and payload.name is None and payload.archived is None:
+            raise ValueError("experiment update is unchanged")
         if payload.status:
             require_transition(current["status"], payload.status)
             if payload.reason is not None and payload.status == current["status"]:
                 raise ValueError("reason requires a status change")
-        item = self.repository.update(tenant, experiment_id, payload.name, payload.status)
+        item = self.repository.update(tenant, experiment_id, payload.name, payload.status) if payload.name is not None or payload.status is not None else current
         if item and payload.status and payload.status != current["status"]:
             self.repository.append_status_transition(
                 tenant,
@@ -32,12 +46,24 @@ class ExperimentService:
                 actor,
                 payload.reason,
             )
+        if payload.archived is not None:
+            item = self.repository.set_archived(tenant, experiment_id, payload.archived, actor)
+            if item:
+                self.repository.append_audit_event(
+                    tenant, actor, experiment_id,
+                    "experiment_archived" if payload.archived else "experiment_restored",
+                    currently_archived, payload.archived,
+                )
+        elif item and payload.name is not None and payload.name != current.get("name"):
+            self.repository.append_audit_event(tenant, actor, experiment_id, "experiment_renamed", currently_archived, currently_archived)
         return item
 
     def append_result(self, tenant: UUID, actor: UUID, experiment_id: UUID, payload: ResultCreate) -> dict | None:
         experiment = self.repository.get(tenant, experiment_id)
         if not experiment:
             return None
+        if experiment.get("archived_at") is not None:
+            raise ValueError("archived experiments cannot receive results")
         if experiment["status"] != "running":
             raise ValueError("results require a running experiment")
 

@@ -8,6 +8,7 @@ import {
   getDocument,
   getSession,
   updateMember,
+  updateExperiment,
 } from "./api";
 
 beforeEach(() => {
@@ -130,6 +131,7 @@ describe("cookie API client", () => {
       per_page: 25,
       search: "",
       status: "",
+      archived: false,
       sort: "created_at:desc",
     });
 
@@ -204,15 +206,57 @@ describe("cookie API client", () => {
       per_page: 10,
       search: "baseline run",
       status: "running",
+      archived: true,
       sort: "name:asc",
     });
 
     const url = new URL(String(fetcher.mock.calls[0][0]), "http://localhost");
     expect(url.searchParams.get("search")).toBe("baseline run");
     expect(url.searchParams.get("status")).toBe("running");
+    expect(url.searchParams.get("archived")).toBe("true");
     expect(url.searchParams.get("page")).toBe("1");
     expect(url.searchParams.get("per_page")).toBe("10");
     expect(url.searchParams.get("sort")).toBe("name:asc");
+  });
+
+  it("updates experiment name, archive, and restore using PATCH only", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
+
+    await updateExperiment("experiment-1", { name: "Renombrado" });
+    await updateExperiment("experiment-1", { archived: true });
+    await updateExperiment("experiment-1", { archived: false });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "/api/experiments/experiment-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ name: "Renombrado" }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/experiments/experiment-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ archived: true }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "/api/experiments/experiment-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ archived: false }),
+      }),
+    );
+    expect(
+      fetcher.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
   });
 
   it.each([

@@ -32,6 +32,7 @@ class ExperimentListQuery(BaseModel):
     per_page: int = 20
     search: str = Field(default="", max_length=120)
     status: ExperimentStatusFilter | None = None
+    archived: bool = False
     sort: ExperimentSort = "created_at:desc"
 
     @field_validator("search")
@@ -66,6 +67,7 @@ def list_experiments(
     per_page: int = Query(20),
     search: str = Query(default="", max_length=120),
     status: ExperimentStatusFilter | None = Query(default=None),
+    archived: bool = Query(default=False),
     sort: ExperimentSort = Query(default="created_at:desc"),
     session_token: Annotated[str | None, Cookie()] = None,
     db: Session = Depends(db_session),
@@ -76,6 +78,7 @@ def list_experiments(
             per_page=per_page,
             search=search,
             status=status,
+            archived=archived,
             sort=sort,
         )
     except ValueError as exc:

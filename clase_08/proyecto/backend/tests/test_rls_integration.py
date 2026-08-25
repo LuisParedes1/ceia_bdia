@@ -78,6 +78,26 @@ class RlsIntegrationTests(unittest.TestCase):
                     {"id": transition_id, "reason": "rewritten"},
                 )
 
+    def test_archived_experiment_metadata_remains_tenant_isolated(self) -> None:
+        experiment_id = uuid4()
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_a, self.tenant_a)
+            connection.execute(
+                text("""INSERT INTO experiments (id,tenant_id,creator_id,name,status,archived_at,archived_by)
+                    VALUES (:id,:tenant,:actor,'archived','completed',now(),:actor)"""),
+                {"id": experiment_id, "tenant": self.tenant_a, "actor": self.user_a},
+            )
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_b, self.tenant_b)
+            self.assertEqual(
+                connection.execute(text("SELECT count(*) FROM experiments WHERE id=:id AND archived_at IS NOT NULL"), {"id": experiment_id}).scalar_one(),
+                0,
+            )
+        with self.assertRaises(Exception):
+            with self.engine.begin() as connection:
+                self._context(connection, self.user_a, self.tenant_a)
+                connection.execute(text("UPDATE experiments SET status='failed' WHERE id=:id"), {"id": experiment_id})
+
     def test_pooled_connection_does_not_retain_context(self) -> None:
         with self.engine.begin() as connection:
             self._context(connection, self.user_a, self.tenant_a)

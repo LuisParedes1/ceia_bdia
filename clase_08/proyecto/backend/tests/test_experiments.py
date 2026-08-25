@@ -31,6 +31,102 @@ class ExperimentTests(unittest.TestCase):
         for current, target in (("draft", "completed"), ("completed", "running"), ("failed", "running")):
             with self.assertRaises(ValueError): require_transition(current, target)
 
+    def test_rename_archive_contract_rejects_empty_patch_and_supports_active_archive_filter(self) -> None:
+        from pydantic import ValidationError
+
+        from app.api.experiment_schemas import ExperimentUpdate
+        from app.api.experiments import ExperimentListQuery
+
+        update = ExperimentUpdate(name="  renamed experiment  ")
+        self.assertEqual(update.name, "renamed experiment")
+        self.assertTrue(ExperimentUpdate(archived=True).archived)
+        self.assertFalse(ExperimentUpdate(archived=False).archived)
+        for payload in ({}, {"name": "   "}, {"name": "x" * 201}):
+            with self.assertRaises(ValidationError):
+                ExperimentUpdate.model_validate(payload)
+        self.assertEqual(ExperimentListQuery().archived, False)
+        self.assertTrue(ExperimentListQuery(archived=True).archived)
+
+    def test_archive_restore_are_audited_and_preserve_lifecycle_data(self) -> None:
+        from uuid import uuid4
+
+        from app.api.experiment_schemas import ExperimentUpdate
+        from app.services.experiments import ExperimentService
+
+        tenant, experiment, actor = uuid4(), uuid4(), uuid4()
+
+        class Repository:
+            def __init__(self, current: dict[str, Any]) -> None:
+                self.current = current
+                self.archive_calls: list[tuple[object, ...]] = []
+                self.audit_calls: list[tuple[object, ...]] = []
+
+            def get(self, _tenant, _experiment):
+                return self.current
+
+            def update(self, *_args):
+                raise AssertionError("archive must not change lifecycle data")
+
+            def set_archived(self, *args):
+                self.archive_calls.append(args)
+                return {**self.current, "archived_at": None if args[2] is False else "now"}
+
+            def append_audit_event(self, *args):
+                self.audit_calls.append(args)
+
+        archived = Repository({"id": experiment, "status": "completed", "results": [{"id": uuid4()}], "status_history": [{"id": uuid4()}], "archived_at": None})
+        item = ExperimentService(cast(Any, archived)).update(tenant, actor, experiment, ExperimentUpdate(archived=True))
+        self.assertIsNotNone(item)
+        self.assertEqual(archived.archive_calls, [(tenant, experiment, True, actor)])
+        self.assertEqual(archived.audit_calls, [(tenant, actor, experiment, "experiment_archived", False, True)])
+        self.assertEqual(len(archived.current["results"]), 1)
+        self.assertEqual(len(archived.current["status_history"]), 1)
+
+        restored = Repository({"id": experiment, "status": "failed", "archived_at": "yesterday"})
+        ExperimentService(cast(Any, restored)).update(tenant, actor, experiment, ExperimentUpdate(archived=False))
+        self.assertEqual(restored.archive_calls, [(tenant, experiment, False, actor)])
+        self.assertEqual(restored.audit_calls, [(tenant, actor, experiment, "experiment_restored", True, False)])
+
+    def test_running_or_archived_experiments_reject_forbidden_mutations(self) -> None:
+        from uuid import uuid4
+
+        from app.api.experiment_schemas import ExperimentUpdate, ResultCreate
+        from app.services.experiments import ExperimentService
+
+        tenant, experiment, actor = uuid4(), uuid4(), uuid4()
+
+        class Repository:
+            def __init__(self, current: dict[str, Any]) -> None:
+                self.current = current
+
+            def get(self, _tenant, _experiment):
+                return self.current
+
+        with self.assertRaisesRegex(ValueError, "running"):
+            ExperimentService(cast(Any, Repository({"status": "running", "archived_at": None}))).update(tenant, actor, experiment, ExperimentUpdate(archived=True))
+        with self.assertRaisesRegex(ValueError, "archived"):
+            ExperimentService(cast(Any, Repository({"status": "completed", "archived_at": "yesterday"}))).update(tenant, actor, experiment, ExperimentUpdate(status="completed"))
+        with self.assertRaisesRegex(ValueError, "archived"):
+            ExperimentService(cast(Any, Repository({"status": "running", "archived_at": "yesterday"}))).append_result(tenant, actor, experiment, ResultCreate(status="completed"))
+        with self.assertRaisesRegex(ValueError, "unchanged"):
+            ExperimentService(cast(Any, Repository({"status": "completed", "name": "same", "archived_at": None}))).update(tenant, actor, experiment, ExperimentUpdate(name="same"))
+
+    def test_archive_migration_and_repository_are_tenant_scoped_and_auditable(self) -> None:
+        source = Path("migrations/versions/20260330_13_experiment_archive.py").read_text()
+        for invariant in (
+            'down_revision = "20260330_12"',
+            "archived_at timestamptz",
+            "archived_by uuid",
+            "FOREIGN KEY (tenant_id,archived_by) REFERENCES memberships(tenant_id,user_id)",
+            "experiments_tenant_archived_idx",
+            "results_reject_archived_experiment",
+        ):
+            self.assertIn(invariant, source)
+        repository = Path("app/repositories/experiments.py").read_text()
+        self.assertIn("e.archived_at IS NULL", repository)
+        self.assertIn("e.archived_at IS NOT NULL", repository)
+        self.assertIn("INSERT INTO audit_events", repository)
+
     def test_status_transition_reason_is_trimmed_bounded_and_requires_status(self) -> None:
         from pydantic import ValidationError
 
@@ -69,6 +165,9 @@ class ExperimentTests(unittest.TestCase):
 
             def append_status_transition(self, *args):
                 self.history_calls.append(args)
+
+            def append_audit_event(self, *_args):
+                pass
 
         repository = Repository()
         item = ExperimentService(cast(Any, repository)).update(
