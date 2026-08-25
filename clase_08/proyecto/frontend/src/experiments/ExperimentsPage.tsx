@@ -97,7 +97,7 @@ function ExperimentDialog({
   experiment: api.Experiment | null;
   canMutate: boolean;
   onClose: () => void;
-  onChanged: () => void;
+  onChanged: (experiment?: api.Experiment) => void;
 }) {
   const [detail, setDetail] = useState<api.Experiment | null>(null);
   const [error, setError] = useState("");
@@ -151,13 +151,13 @@ function ExperimentDialog({
       const metrics = metricName
         ? [{ name: metricName, type: metricType, value }]
         : [];
-      await api.appendExperimentResult(experiment.id, {
+      const result = await api.appendExperimentResult(experiment.id, {
         status: resultStatus,
         output_summary: output || undefined,
         metrics,
+        terminal_status: resultStatus,
       });
-      await api.updateExperiment(experiment.id, resultStatus);
-      onChanged();
+      onChanged(result.experiment);
       onClose();
     } catch (reason) {
       setError(
@@ -651,7 +651,22 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
         experiment={selected}
         canMutate={canMutate}
         onClose={() => setSelected(null)}
-        onChanged={() => setReload((value) => value + 1)}
+        onChanged={(changedExperiment) => {
+          if (!changedExperiment) {
+            setReload((value) => value + 1);
+            return;
+          }
+          setResult((current) =>
+            current
+              ? {
+                  ...current,
+                  items: current.items.map((item) =>
+                    item.id === changedExperiment.id ? changedExperiment : item,
+                  ),
+                }
+              : current,
+          );
+        }}
       />
     </section>
   );

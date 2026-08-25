@@ -46,11 +46,16 @@ describe("RowActions", () => {
       name: "Procesando",
     });
     expect(processingTooltip.id).not.toBe(focusedTooltip.id);
+    expect(processing).toHaveAttribute(
+      "aria-describedby",
+      processingTooltip.id,
+    );
     fireEvent.blur(processing);
     expect(processing).not.toHaveAttribute("aria-describedby");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     fireEvent.click(info);
+    fireEvent.click(processing);
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(processing).toBeDisabled();
   });

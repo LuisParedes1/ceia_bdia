@@ -352,9 +352,17 @@ class IdentityHttpTests(unittest.TestCase):
         experiment_id = created[2]["id"]
         running = self.request(f"/api/experiments/{experiment_id}", {"status": "running"}, self.csrf_headers(session, csrf), "PATCH")
         self.assertEqual((running[0], running[2]["status"]), (200, "running"))
-        result = self.request(f"/api/experiments/{experiment_id}/results", {"status": "completed", "input_summary": "dataset v1", "output_summary": "trained", "metrics": [{"name": "accuracy", "type": "number", "value": 0.91, "unit": "%", "step": 1}]}, self.csrf_headers(session, csrf))
-        self.assertEqual((result[0], result[2]["metrics"][0]["value_type"]), (201, "number"))
-        self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "completed"}, self.csrf_headers(session, csrf), "PATCH")[0], 200)
+        result = self.request(f"/api/experiments/{experiment_id}/results", {"status": "completed", "terminal_status": "completed", "transition_reason": "  run verified  ", "input_summary": "dataset v1", "output_summary": "trained", "metrics": [{"name": "accuracy", "type": "number", "value": 0.91, "unit": "%", "step": 1}]}, self.csrf_headers(session, csrf))
+        self.assertEqual((result[0], result[2]["metrics"][0]["value_type"], result[2]["experiment"]["status"]), (201, "number", "completed"))
+        detail = self.request(f"/api/experiments/{experiment_id}", headers={"Cookie": f"session_token={session}"})
+        self.assertEqual((detail[2]["status"], len(detail[2]["results"])), ("completed", 1))
+        self.assertEqual(
+            [(item["previous_status"], item["next_status"], item["actor_id"], item["reason"]) for item in detail[2]["status_history"]],
+            [("draft", "running", registered["user_id"], None), ("running", "completed", registered["user_id"], "run verified")],
+        )
+        invalid_closure = self.request(f"/api/experiments/{experiment_id}/results", {"status": "failed", "terminal_status": "failed"}, self.csrf_headers(session, csrf))
+        self.assertEqual(invalid_closure[0], 409)
+        self.assertEqual(len(self.request(f"/api/experiments/{experiment_id}", headers={"Cookie": f"session_token={session}"})[2]["results"]), 1)
         self.assertEqual(self.request(f"/api/experiments/{experiment_id}", {"status": "running"}, self.csrf_headers(session, csrf), "PATCH")[0], 409)
         self.assertEqual(self.request(f"/api/experiments/{experiment_id}/results/{result[2]['id']}", {"output_summary": "edited"}, self.csrf_headers(session, csrf), "PATCH")[0], 404)
 
@@ -414,6 +422,62 @@ class IdentityHttpTests(unittest.TestCase):
                 with connection.cursor() as cursor:
                     cursor.execute("INSERT INTO users (id,email,password_hash) VALUES (%s,%s,%s)", (str(uuid4()), unassigned_email, hash_password("correct-horse")))
             self.assertEqual(self.request("/api/auth/login", {"email": unassigned_email, "password": "correct-horse"})[0], 403)
+
+    def test_admin_can_manage_tenant_memberships_with_auditable_last_admin_protection(self) -> None:
+        status, headers, owner = self.request(
+            "/api/auth/register",
+            {"email": f"membership-owner-{uuid4()}@example.com", "password": "correct-horse", "tenant_name": "Membership Lab"},
+        )
+        self.assertEqual(status, 201)
+        owner_session, owner_csrf = self.cookies(headers)
+        owner_mutation_headers = self.csrf_headers(owner_session, owner_csrf)
+
+        viewer_email = f"membership-viewer-{uuid4()}@example.com"
+        created = self.request("/api/members", {"email": viewer_email, "role": "viewer"}, owner_mutation_headers)
+        self.assertEqual(created[0], 201)
+        membership_id = created[2]["user_id"]
+
+        edited = self.request(f"/api/members/{membership_id}", {"role": "member"}, owner_mutation_headers, "PATCH")
+        self.assertEqual((edited[0], edited[2]), (200, {"membership_id": membership_id, "user_id": membership_id, "role": "member", "active": True}))
+        deactivated = self.request(f"/api/members/{membership_id}", {"active": False}, owner_mutation_headers, "PATCH")
+        self.assertEqual((deactivated[0], deactivated[2]["active"]), (200, False))
+        reactivated = self.request(f"/api/members/{membership_id}", {"active": True}, owner_mutation_headers, "PATCH")
+        self.assertEqual((reactivated[0], reactivated[2]["active"]), (200, True))
+
+        self.assertEqual(self.request(f"/api/members/{owner['user_id']}", {"active": False}, owner_mutation_headers, "PATCH")[0], 409)
+        self.assertEqual(self.request(f"/api/members/{owner['user_id']}", {"role": "member"}, owner_mutation_headers, "PATCH")[0], 409)
+        self.assertEqual(self.request(f"/api/members/{membership_id}", {}, owner_mutation_headers, "PATCH")[0], 422)
+        self.assertEqual(self.request(f"/api/members/{membership_id}", {"role": "member"}, owner_mutation_headers, "PATCH")[0], 409)
+
+        _, other_headers, other_owner = self.request(
+            "/api/auth/register",
+            {"email": f"membership-other-{uuid4()}@example.com", "password": "correct-horse", "tenant_name": "Other Membership Lab"},
+        )
+        other_session, _ = self.cookies(other_headers)
+        self.assertEqual(self.request(f"/api/members/{membership_id}", {"active": False}, self.csrf_headers(other_session, self.cookies(other_headers)[1]), "PATCH")[0], 404)
+
+        self.assertEqual(self.request("/api/auth/recovery/request", {"email": viewer_email})[0], 202)
+        with urlopen(f"{MAILPIT_URL}/api/v1/messages", timeout=10) as response:
+            token_match = re.search(r"token=([A-Za-z0-9_-]+)", json.loads(response.read())["messages"][0]["Snippet"])
+        assert token_match is not None
+        self.assertEqual(self.request("/api/auth/recovery/confirm", {"token": token_match.group(1), "password": "viewer-password"})[0], 200)
+        _, viewer_headers, _ = self.request("/api/auth/login", {"email": viewer_email, "password": "viewer-password"})
+        viewer_session, viewer_csrf = self.cookies(viewer_headers)
+        self.assertEqual(self.request(f"/api/members/{membership_id}", {"role": "viewer"}, self.csrf_headers(viewer_session, viewer_csrf), "PATCH")[0], 403)
+
+        database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT action, outcome, resource, metadata FROM audit_events WHERE tenant_id=%s AND actor_id=%s AND action='membership_change' ORDER BY created_at DESC LIMIT 1", (owner["tenant_id"], owner["user_id"]))
+                audit_row = cursor.fetchone()
+                assert audit_row is not None
+                action, outcome, resource, metadata = audit_row
+        self.assertEqual((action, outcome, resource), ("membership_change", "success", membership_id))
+        self.assertEqual(metadata["target_user_id"], membership_id)
+        self.assertEqual(metadata["previous_role"], "member")
+        self.assertEqual(metadata["new_role"], "member")
+        self.assertFalse(metadata["previous_active"])
+        self.assertTrue(metadata["new_active"])
 
 
 if __name__ == "__main__":

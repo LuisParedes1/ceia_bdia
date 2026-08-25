@@ -52,6 +52,32 @@ class RlsIntegrationTests(unittest.TestCase):
                 "tenant-b",
             )
 
+    def test_experiment_status_history_is_tenant_isolated_and_append_only(self) -> None:
+        experiment_id, transition_id = uuid4(), uuid4()
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_a, self.tenant_a)
+            connection.execute(
+                text("INSERT INTO experiments (id, tenant_id, creator_id, name, status) VALUES (:id, :tenant, :actor, 'history', 'running')"),
+                {"id": experiment_id, "tenant": self.tenant_a, "actor": self.user_a},
+            )
+            connection.execute(
+                text("INSERT INTO experiment_status_transitions (id, tenant_id, experiment_id, previous_status, next_status, actor_id) VALUES (:id, :tenant, :experiment, 'draft', 'running', :actor)"),
+                {"id": transition_id, "tenant": self.tenant_a, "experiment": experiment_id, "actor": self.user_a},
+            )
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_b, self.tenant_b)
+            self.assertEqual(
+                connection.execute(text("SELECT count(*) FROM experiment_status_transitions WHERE id=:id"), {"id": transition_id}).scalar_one(),
+                0,
+            )
+        with self.assertRaises(Exception):
+            with self.engine.begin() as connection:
+                self._context(connection, self.user_a, self.tenant_a)
+                connection.execute(
+                    text("UPDATE experiment_status_transitions SET reason=:reason WHERE id=:id"),
+                    {"id": transition_id, "reason": "rewritten"},
+                )
+
     def test_pooled_connection_does_not_retain_context(self) -> None:
         with self.engine.begin() as connection:
             self._context(connection, self.user_a, self.tenant_a)

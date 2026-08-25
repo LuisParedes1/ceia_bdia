@@ -14,6 +14,7 @@ export type RowAction = {
   disabled?: boolean;
   busy?: boolean;
   variant?: "default" | "ghost" | "outline";
+  tooltip?: string;
 };
 
 export function RowActions({ actions }: { actions: RowAction[] }) {
@@ -28,6 +29,7 @@ export function RowActions({ actions }: { actions: RowAction[] }) {
             disabled,
             busy,
             variant = "outline",
+            tooltip,
           }) => (
             <Tooltip key={label}>
               <TooltipTrigger>
@@ -43,7 +45,7 @@ export function RowActions({ actions }: { actions: RowAction[] }) {
                   <Icon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{label}</TooltipContent>
+              <TooltipContent>{tooltip ?? label}</TooltipContent>
             </Tooltip>
           ),
         )}

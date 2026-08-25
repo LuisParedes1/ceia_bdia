@@ -7,12 +7,16 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Info,
+  Pencil,
   Plus,
   Search,
+  UserRoundCheck,
+  UserRoundX,
 } from "lucide-react";
 import * as api from "../api";
 import { Badge } from "../components/ui/badge";
-import { RowActions } from "../components/custom/RowActions";
+import { RowActions, type RowAction } from "../components/custom/RowActions";
+import { ConfirmDialog } from "../components/custom/ConfirmDialog";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -219,6 +223,70 @@ function CreateDialog({
   );
 }
 
+function EditRoleDialog({
+  member,
+  open,
+  busy,
+  onOpenChange,
+  onSubmit,
+}: {
+  member: api.Member | null;
+  open: boolean;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (role: api.MemberRole) => Promise<void>;
+}) {
+  const [role, setRole] = useState<api.MemberRole>(
+    () => member?.role ?? "viewer",
+  );
+  if (!member) return null;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void onSubmit(role);
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent aria-describedby="edit-member-role-description">
+        <div className="dialog-header">
+          <DialogTitle>Editar rol</DialogTitle>
+          <DialogDescription id="edit-member-role-description">
+            Actualizá el nivel de acceso de {member.email}.
+          </DialogDescription>
+        </div>
+        <form noValidate onSubmit={submit}>
+          <FieldGroup>
+            <Field>
+              <label htmlFor="edit-member-role">Rol</label>
+              <select
+                id="edit-member-role"
+                value={role}
+                disabled={busy}
+                onChange={(event) =>
+                  setRole(event.target.value as api.MemberRole)
+                }
+              >
+                <option value="admin">Administración</option>
+                <option value="member">Integrante</option>
+                <option value="viewer">Consulta</option>
+              </select>
+            </Field>
+            <div className="dialog-footer">
+              <DialogClose asChild>
+                <Button type="button" variant="outline" disabled={busy}>
+                  Cancelar
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={busy || role === member.role}>
+                {busy ? "Guardando…" : "Guardar cambios"}
+              </Button>
+            </div>
+          </FieldGroup>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function Pagination({
   result,
   update,
@@ -286,18 +354,28 @@ function Pagination({
   );
 }
 
-export function UsersPage({ canManage }: { canManage: boolean }) {
+export function UsersPage({
+  canManage,
+  currentUserId,
+}: {
+  canManage: boolean;
+  currentUserId?: string;
+}) {
   const [params, setParams] = useSearchParams();
   const query = useMemo(() => queryFrom(params), [params]);
   const [success, setSuccess] = useState("");
   const [result, setResult] = useState<api.MembersResponse | null>(null);
   const [error, setError] = useState("");
+  const [mutationError, setMutationError] = useState("");
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [search, setSearch] = useState(query.search);
   const [selected, setSelected] = useState<api.Member | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<api.Member | null>(null);
+  const [deactivating, setDeactivating] = useState<api.Member | null>(null);
+  const [pendingMemberId, setPendingMemberId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     api
@@ -334,6 +412,74 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
     event.preventDefault();
     update({ search, page: 1 });
   };
+  const mutateMember = async (
+    member: api.Member,
+    payload: api.MemberUpdate,
+    message: string,
+  ) => {
+    if (pendingMemberId) return;
+    setPendingMemberId(member.user_id);
+    setMutationError("");
+    setSuccess("");
+    try {
+      await api.updateMember(member.user_id, payload);
+      setSuccess(message);
+      setEditing(null);
+      setDeactivating(null);
+      setLoading(true);
+      setRetry((value) => value + 1);
+    } catch (next) {
+      setMutationError(
+        next instanceof Error
+          ? next.message
+          : "No se pudo actualizar a la persona.",
+      );
+    } finally {
+      setPendingMemberId(null);
+    }
+  };
+  const actionsFor = (member: api.Member): RowAction[] => {
+    const busy = pendingMemberId === member.user_id;
+    const selfDeactivation = currentUserId === member.user_id;
+    const actions: RowAction[] = [
+      {
+        label: "Ver detalles",
+        icon: Info,
+        onClick: () => setSelected(member),
+        disabled: busy,
+      },
+    ];
+    if (!canManage) return actions;
+    actions.push({
+      label: `Editar rol de ${member.email}`,
+      icon: Pencil,
+      onClick: () => setEditing(member),
+      disabled: busy,
+      busy,
+    });
+    if (member.status === "active") {
+      actions.push({
+        label: `Desactivar a ${member.email}`,
+        tooltip: selfDeactivation
+          ? "No podés desactivar tu propia membresía."
+          : undefined,
+        icon: UserRoundX,
+        onClick: () => setDeactivating(member),
+        disabled: busy || selfDeactivation,
+        busy,
+      });
+    } else {
+      actions.push({
+        label: `Reactivar a ${member.email}`,
+        icon: UserRoundCheck,
+        onClick: () =>
+          void mutateMember(member, { active: true }, "La persona fue reactivada."),
+        disabled: busy,
+        busy,
+      });
+    }
+    return actions;
+  };
   const rows = (member: api.Member) => (
     <TableRow key={member.user_id}>
       <TableCell>{member.email}</TableCell>
@@ -347,15 +493,7 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
         <Badge>{passwordLabel(member)}</Badge>
       </TableCell>
       <TableCell className="actions-cell">
-        <RowActions
-          actions={[
-            {
-              label: "Ver detalles",
-              icon: Info,
-              onClick: () => setSelected(member),
-            },
-          ]}
-        />
+        <RowActions actions={actionsFor(member)} />
       </TableCell>
     </TableRow>
   );
@@ -378,6 +516,11 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
       {success && (
         <p className="notice" role="status">
           {success}
+        </p>
+      )}
+      {mutationError && (
+        <p className="notice error" role="alert">
+          {mutationError}
         </p>
       )}
       <form className="directory-toolbar" onSubmit={searchSubmit}>
@@ -512,15 +655,7 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
                   <div>
                     <MemberLabels member={member} />
                   </div>
-                  <RowActions
-                    actions={[
-                      {
-                        label: "Ver detalles",
-                        icon: Info,
-                        onClick: () => setSelected(member),
-                      },
-                    ]}
-                  />
+                  <RowActions actions={actionsFor(member)} />
                 </article>
               ))}
             </div>
@@ -539,18 +674,45 @@ export function UsersPage({ canManage }: { canManage: boolean }) {
         open={!!selected}
         onOpenChange={(open) => !open && setSelected(null)}
       />
-      {canManage && (
-        <CreateDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          onCreated={(message) => {
-            setSuccess(message);
-            setCreateOpen(false);
-            setLoading(true);
-            setRetry((value) => value + 1);
-          }}
-        />
-      )}
+          {canManage && (
+            <>
+              <EditRoleDialog
+                key={editing?.user_id ?? "none"}
+                member={editing}
+                open={!!editing}
+                busy={pendingMemberId === editing?.user_id}
+                onOpenChange={(open) => !open && setEditing(null)}
+                onSubmit={(role) =>
+                  mutateMember(editing!, { role }, "El rol fue actualizado.")
+                }
+              />
+              <ConfirmDialog
+                open={!!deactivating}
+                onOpenChange={(open) => !open && setDeactivating(null)}
+                title="¿Querés desactivar a esta persona?"
+                description="Esta persona dejará de tener acceso al espacio de trabajo."
+                confirmLabel="Desactivar"
+                destructive
+                onConfirm={() =>
+                  mutateMember(
+                    deactivating!,
+                    { active: false },
+                    "La persona fue desactivada.",
+                  )
+                }
+              />
+              <CreateDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                onCreated={(message) => {
+                  setSuccess(message);
+                  setCreateOpen(false);
+                  setLoading(true);
+                  setRetry((value) => value + 1);
+                }}
+              />
+            </>
+          )}
     </section>
   );
 }

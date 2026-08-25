@@ -29,6 +29,7 @@ vi.mock("./api", async (importOriginal) => ({
   logout: vi.fn(),
   createMember: vi.fn(),
   getMembers: vi.fn(),
+  updateMember: vi.fn(),
 }));
 afterEach(() => {
   cleanup();
@@ -431,6 +432,128 @@ describe("users directory", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Podrá establecer su contraseña desde recuperación.",
     );
+  });
+
+  it("disables self-deactivation", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers).mockResolvedValueOnce({
+      ...membersResponse,
+      items: [
+        {
+          ...membersResponse.items[0],
+          user_id: adminSession.user_id,
+        },
+      ],
+    });
+    renderAt("/users");
+
+    const deactivateButtons = await screen.findAllByRole("button", {
+      name: "Desactivar a ana@equipo.edu",
+    });
+    expect(deactivateButtons).toHaveLength(2);
+    deactivateButtons.forEach((button) => expect(button).toBeDisabled());
+  });
+
+  it("edits roles from equivalent desktop and mobile row actions", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers)
+      .mockResolvedValueOnce(membersResponse)
+      .mockResolvedValueOnce({
+        ...membersResponse,
+        items: [{ ...membersResponse.items[0], role: "viewer" }],
+      });
+    vi.mocked(apiClient.updateMember).mockResolvedValueOnce({
+      membership_id: "member-1",
+      user_id: "member-1",
+      role: "viewer",
+      active: true,
+    });
+    renderAt("/users?page=2&per_page=20");
+
+    expect(
+      await screen.findAllByRole("button", {
+        name: "Editar rol de ana@equipo.edu",
+      }),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" }),
+    ).toHaveLength(2);
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "Editar rol de ana@equipo.edu",
+      })[0],
+    );
+    fireEvent.change(screen.getByLabelText("Rol"), {
+      target: { value: "viewer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    expect(apiClient.updateMember).toHaveBeenCalledWith("member-1", {
+      role: "viewer",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "El rol fue actualizado.",
+    );
+  });
+
+  it("confirms deactivation, reports failures, and reactivates without DELETE", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers)
+      .mockResolvedValueOnce(membersResponse)
+      .mockResolvedValueOnce({
+        ...membersResponse,
+        items: [{ ...membersResponse.items[0], status: "inactive" }],
+      });
+    vi.mocked(apiClient.updateMember)
+      .mockRejectedValueOnce(
+        new Error("El espacio debe conservar una administración."),
+      )
+      .mockResolvedValueOnce({
+        membership_id: "member-1",
+        user_id: "member-1",
+        role: "member",
+        active: true,
+      });
+    renderAt("/users");
+
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", {
+          name: "Desactivar a ana@equipo.edu",
+        })
+      )[0],
+    );
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "¿Querés desactivar a esta persona?",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(apiClient.updateMember).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El espacio debe conservar una administración.",
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+    expect(
+      await screen.findAllByRole("button", {
+        name: "Reactivar a ana@equipo.edu",
+      }),
+    ).toHaveLength(2);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Reactivar a ana@equipo.edu" })[0],
+    );
+    expect(apiClient.updateMember).toHaveBeenLastCalledWith("member-1", {
+      active: true,
+    });
   });
 });
 

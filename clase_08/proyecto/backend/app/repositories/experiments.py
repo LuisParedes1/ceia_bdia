@@ -33,6 +33,7 @@ class ExperimentRepository:
             return None
         item = dict(row)
         item["results"] = [dict(result) for result in self.db.execute(text("SELECT * FROM results WHERE tenant_id=:tenant AND experiment_id=:id ORDER BY created_at,id"), {"tenant": tenant, "id": experiment_id}).mappings()]
+        item["status_history"] = [dict(transition) for transition in self.db.execute(text("SELECT * FROM experiment_status_transitions WHERE tenant_id=:tenant AND experiment_id=:id ORDER BY occurred_at,id"), {"tenant": tenant, "id": experiment_id}).mappings()]
         for result in item["results"]:
             result["metrics"] = [dict(metric) for metric in self.db.execute(text("SELECT * FROM metrics WHERE tenant_id=:tenant AND result_id=:result ORDER BY recorded_at,id"), {"tenant": tenant, "result": result["id"]}).mappings()]
         return item
@@ -74,6 +75,12 @@ class ExperimentRepository:
     def update(self, tenant: UUID, experiment_id: UUID, name: str | None, status: str | None) -> dict | None:
         row = self.db.execute(text("UPDATE experiments SET name=COALESCE(:name,name),status=COALESCE(:status,status),updated_at=now() WHERE tenant_id=:tenant AND id=:id RETURNING *"), {"name": name, "status": status, "tenant": tenant, "id": experiment_id}).mappings().first()
         return dict(row) if row else None
+
+    def append_status_transition(self, tenant: UUID, experiment_id: UUID, previous_status: str, next_status: str, actor: UUID, reason: str | None) -> None:
+        self.db.execute(
+            text("INSERT INTO experiment_status_transitions (id,tenant_id,experiment_id,previous_status,next_status,actor_id,reason) VALUES (:id,:tenant,:experiment,:previous,:next,:actor,:reason)"),
+            {"id": uuid4(), "tenant": tenant, "experiment": experiment_id, "previous": previous_status, "next": next_status, "actor": actor, "reason": reason},
+        )
 
     def append_result(self, tenant: UUID, actor: UUID, experiment_id: UUID, payload: ResultCreate) -> dict:
         result_id = uuid4()

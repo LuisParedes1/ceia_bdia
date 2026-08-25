@@ -457,6 +457,7 @@ function UsersRoute() {
   return (
     <UsersPage
       canManage={session?.capabilities.includes("members:manage") ?? false}
+      currentUserId={session?.user_id}
     />
   );
 }

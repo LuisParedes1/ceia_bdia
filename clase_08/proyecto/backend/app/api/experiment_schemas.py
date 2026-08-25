@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 ExperimentStatus = Literal["draft", "running", "completed", "failed"]
 MetricType = Literal["number", "text", "boolean", "json"]
@@ -17,6 +17,23 @@ class ExperimentCreate(BaseModel):
 class ExperimentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     status: ExperimentStatus | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def reason_requires_status(self) -> "ExperimentUpdate":
+        if self.reason is not None and self.status is None:
+            raise ValueError("reason requires a status change")
+        return self
 
 
 class MetricCreate(BaseModel):
@@ -42,9 +59,27 @@ class MetricCreate(BaseModel):
 
 class ResultCreate(BaseModel):
     status: Literal["completed", "failed"]
+    terminal_status: Literal["completed", "failed"] | None = None
+    transition_reason: str | None = Field(default=None, min_length=1, max_length=1000)
     input_summary: str | None = Field(default=None, max_length=4000)
     output_summary: str | None = Field(default=None, max_length=4000)
     metrics: list[MetricCreate] = Field(default_factory=list, max_length=100)
+
+    @field_validator("transition_reason", mode="before")
+    @classmethod
+    def strip_transition_reason(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("transition_reason must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def transition_reason_requires_terminal_status(self) -> "ResultCreate":
+        if self.transition_reason is not None and self.terminal_status is None:
+            raise ValueError("transition_reason requires terminal_status")
+        return self
 
 
 class ExperimentPath(BaseModel):

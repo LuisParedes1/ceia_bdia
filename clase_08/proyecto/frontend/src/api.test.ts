@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   apiErrorMessage,
   createMember,
+  appendExperimentResult,
   getExperiments,
   getDocuments,
   getDocument,
   getSession,
+  updateMember,
 } from "./api";
 
 beforeEach(() => {
@@ -28,6 +30,59 @@ describe("cookie API client", () => {
       }),
     );
   });
+  it("updates a membership with PATCH, JSON payload, and CSRF", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          membership_id: "membership-1",
+          user_id: "member-1",
+          role: "viewer",
+          active: false,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      updateMember("membership-1", { role: "viewer", active: false }),
+    ).resolves.toEqual({
+      membership_id: "membership-1",
+      user_id: "member-1",
+      role: "viewer",
+      active: false,
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/members/membership-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ role: "viewer", active: false }),
+        credentials: "include",
+        headers: expect.objectContaining({
+          "content-type": "application/json",
+          "x-csrf-token": "token",
+        }),
+      }),
+    );
+    expect(
+      fetcher.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+  });
+
+  it("surfaces membership update errors in Spanish", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ detail: "last admin cannot be deactivated" }),
+        {
+          status: 409,
+        },
+      ),
+    );
+
+    await expect(
+      updateMember("membership-1", { active: false }),
+    ).rejects.toThrow("No se pudo completar la solicitud por un conflicto.");
+  });
+
   it("does not attach CSRF to session reads", async () => {
     const fetcher = vi
       .spyOn(globalThis, "fetch")
@@ -35,6 +90,33 @@ describe("cookie API client", () => {
     await getSession();
     expect(fetcher.mock.calls[0][1]?.headers).not.toHaveProperty(
       "x-csrf-token",
+    );
+  });
+
+  it("sends terminal experiment closure in the result POST", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 201 }));
+
+    await appendExperimentResult("experiment-1", {
+      status: "completed",
+      terminal_status: "completed",
+      transition_reason: "verified",
+      metrics: [],
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/experiments/experiment-1/results",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          status: "completed",
+          terminal_status: "completed",
+          transition_reason: "verified",
+          metrics: [],
+        }),
+      }),
     );
   });
 

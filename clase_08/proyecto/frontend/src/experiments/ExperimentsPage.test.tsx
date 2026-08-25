@@ -221,7 +221,7 @@ describe("ExperimentsPage", () => {
     expect(api.updateExperiment).toHaveBeenCalledWith("e1", "running");
   });
 
-  it("appends a typed result, closes the lifecycle, and presents provenance", async () => {
+  it("appends a typed result and presents provenance", async () => {
     const running = { ...experiment, status: "running" as const };
     vi.mocked(api.getExperiments).mockResolvedValue(page([running]));
     vi.mocked(api.getExperiment).mockResolvedValue({
@@ -255,10 +255,7 @@ describe("ExperimentsPage", () => {
     vi.mocked(api.appendExperimentResult).mockResolvedValue(
       {} as api.ExperimentResult,
     );
-    vi.mocked(api.updateExperiment).mockResolvedValue({
-      ...running,
-      status: "completed",
-    });
+
     renderPage(true);
     fireEvent.click(
       (await screen.findAllByRole("button", { name: "Ver detalle" }))[0],
@@ -282,8 +279,41 @@ describe("ExperimentsPage", () => {
         status: "completed",
         output_summary: "listo",
         metrics: [{ name: "pérdida", type: "number", value: 0.1 }],
+        terminal_status: "completed",
       }),
     );
-    expect(api.updateExperiment).toHaveBeenCalledWith("e1", "completed");
+    expect(api.updateExperiment).not.toHaveBeenCalled();
   });
+
+      it("submits terminal closure with the result instead of a second status mutation", async () => {
+        const running = { ...experiment, status: "running" as const };
+        vi.mocked(api.getExperiments).mockResolvedValue(page([running]));
+        vi.mocked(api.getExperiment).mockResolvedValue({ ...running, results: [] });
+        vi.mocked(api.appendExperimentResult).mockResolvedValue({
+          id: "r2",
+          status: "completed",
+          creator_id: "u1",
+          created_at: "2026-03-30T11:00:00Z",
+          input_summary: null,
+          output_summary: null,
+          metrics: [],
+          experiment: { ...running, status: "completed" },
+        });
+        renderPage(true);
+        fireEvent.click(
+          (await screen.findAllByRole("button", { name: "Ver detalle" }))[0],
+        );
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Registrar resultado" }),
+        );
+        await waitFor(() =>
+          expect(api.appendExperimentResult).toHaveBeenCalledWith("e1", {
+            status: "completed",
+            output_summary: undefined,
+            metrics: [],
+            terminal_status: "completed",
+          }),
+        );
+        expect(api.updateExperiment).not.toHaveBeenCalled();
+      });
 });

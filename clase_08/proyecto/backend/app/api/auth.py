@@ -3,6 +3,7 @@
 # pyright: reportMissingImports=false
 
 from datetime import UTC, datetime, timedelta
+import json
 from secrets import token_urlsafe
 from typing import Annotated, Generator
 from uuid import UUID, uuid4
@@ -47,6 +48,22 @@ class RecoveryConfirm(BaseModel):
 class MemberCreate(BaseModel):
     email: EmailStr
     role: str
+
+
+class MemberUpdate(BaseModel):
+    """Optional, bounded membership state changes for tenant administrators."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str | None = None
+    active: bool | None = None
+
+    @field_validator("role")
+    @classmethod
+    def role_is_allowed(cls, value: str | None) -> str | None:
+        if value is not None and value not in _ROLES:
+            raise ValueError("El rol debe ser admin, member o viewer.")
+        return value
 
 
 class MemberListParams(BaseModel):
@@ -167,8 +184,12 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _audit(db: Session, action: str, outcome: str, actor: UUID | None = None, tenant: UUID | None = None, resource: str | None = None) -> None:
-    db.execute(text("INSERT INTO audit_events (id, actor_id, tenant_id, action, outcome, resource) VALUES (:id,:actor,:tenant,:action,:outcome,:resource)"), {"id": uuid4(), "actor": actor, "tenant": tenant, "action": action, "outcome": outcome, "resource": resource})
+def _audit(db: Session, action: str, outcome: str, actor: UUID | None = None, tenant: UUID | None = None, resource: str | None = None, metadata: dict[str, object] | None = None) -> None:
+    # pi-lens-ignore: python-sql-injection
+    db.execute(
+        text("INSERT INTO audit_events (id, actor_id, tenant_id, action, outcome, resource, metadata) VALUES (:id,:actor,:tenant,:action,:outcome,:resource,CAST(:metadata AS jsonb))"),
+        {"id": uuid4(), "actor": actor, "tenant": tenant, "action": action, "outcome": outcome, "resource": resource, "metadata": json.dumps(metadata or {})},
+    )
 
 
 def _recovery_resource(email: str) -> str:
@@ -372,4 +393,88 @@ def create_or_attach_member(payload: MemberCreate, request: Request, session_tok
         db.execute(text("INSERT INTO memberships (tenant_id,user_id) VALUES (:tenant,:user) ON CONFLICT DO NOTHING"), {"tenant": tenant, "user": user["id"]})
         db.execute(text("INSERT INTO membership_roles (tenant_id,user_id,role_id) VALUES (:tenant,:user,:role) ON CONFLICT (tenant_id,user_id) DO UPDATE SET role_id=EXCLUDED.role_id"), {"tenant": tenant, "user": user["id"], "role": role_id})
         _audit(db, "membership_change", "success", state["user_id"], tenant, payload.role)
-    return {"user_id": str(user["id"]), "role": payload.role}
+        return {"user_id": str(user["id"]), "role": payload.role}
+
+
+@router.patch("/members/{membership_id}")
+def update_member(
+    membership_id: UUID,
+    payload: MemberUpdate,
+    request: Request,
+    session_token: Annotated[str | None, Cookie()] = None,
+    csrf_token: Annotated[str | None, Cookie()] = None,
+    x_csrf_token: Annotated[str | None, Header()] = None,
+    db: Session = Depends(db_session),
+) -> dict:
+    """Change a member role or active state without allowing cross-tenant access."""
+
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=422, detail="Se requiere al menos un cambio de membresía.")
+    state = _session(db, session_token)
+    _csrf(db, state, request, x_csrf_token, csrf_token)
+    db.commit()
+    tenant = _tenant_context(db, state, {"admin"})
+
+    with db.begin():
+        db.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(state["user_id"])})
+        db.execute(text("SELECT set_config('app.tenant_id', :value, true)"), {"value": str(tenant)})
+        # Serialize admin-count transitions per tenant. The migration trigger uses the
+        # same transaction-scoped lock to protect concurrent writers outside this route.
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:tenant AS text), 0))"), {"tenant": str(tenant)})
+        current = db.execute(
+            text("""
+                SELECT m.user_id, m.active, r.name AS role
+                FROM memberships m
+                JOIN membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.user_id = m.user_id
+                JOIN roles r ON r.id = mr.role_id AND r.tenant_id = m.tenant_id
+                WHERE m.tenant_id = :tenant AND m.user_id = :user
+                FOR UPDATE OF m
+            """),
+            {"tenant": tenant, "user": membership_id},
+        ).mappings().first()
+        if not current:
+            raise HTTPException(status_code=404, detail="No se encontró la membresía.")
+
+        next_role = payload.role if payload.role is not None else current["role"]
+        next_active = payload.active if payload.active is not None else current["active"]
+        if next_role == current["role"] and next_active == current["active"]:
+            raise HTTPException(status_code=409, detail="La membresía ya tiene esos valores.")
+        if state["user_id"] == membership_id and current["active"] and not next_active:
+            raise HTTPException(status_code=409, detail="No podés desactivar tu propia membresía.")
+        removes_last_admin = current["active"] and current["role"] == "admin" and (not next_active or next_role != "admin")
+        if removes_last_admin:
+            active_admins = db.execute(
+                text("""
+                    SELECT count(*)
+                    FROM memberships m
+                    JOIN membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.user_id = m.user_id
+                    JOIN roles r ON r.id = mr.role_id AND r.tenant_id = m.tenant_id
+                    WHERE m.tenant_id = :tenant AND m.active AND r.name = 'admin'
+                """),
+                {"tenant": tenant},
+            ).scalar_one()
+            if active_admins <= 1:
+                raise HTTPException(status_code=409, detail="El espacio de trabajo debe conservar una persona administradora activa.")
+
+        if payload.role is not None and payload.role != current["role"]:
+            role_id = db.execute(text("SELECT id FROM roles WHERE tenant_id=:tenant AND name=:role"), {"tenant": tenant, "role": payload.role}).scalar_one()
+            db.execute(text("UPDATE membership_roles SET role_id=:role WHERE tenant_id=:tenant AND user_id=:user"), {"role": role_id, "tenant": tenant, "user": membership_id})
+        if payload.active is not None and payload.active != current["active"]:
+            db.execute(text("UPDATE memberships SET active=:active WHERE tenant_id=:tenant AND user_id=:user"), {"active": payload.active, "tenant": tenant, "user": membership_id})
+        _audit(
+            db,
+            "membership_change",
+            "success",
+            state["user_id"],
+            tenant,
+            str(membership_id),
+            {
+                "target_membership_id": str(membership_id),
+                "target_user_id": str(membership_id),
+                "previous_role": current["role"],
+                "new_role": next_role,
+                "previous_active": current["active"],
+                "new_active": next_active,
+            },
+        )
+    return {"membership_id": str(membership_id), "user_id": str(membership_id), "role": next_role, "active": next_active}

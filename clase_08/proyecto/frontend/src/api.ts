@@ -189,6 +189,24 @@ export const createMember = (email: string, role: MemberRole) =>
     method: "POST",
     body: JSON.stringify({ email, role }),
   });
+export type MemberUpdate = {
+  role?: MemberRole;
+  active?: boolean;
+};
+export type MemberUpdateResponse = {
+  membership_id: string;
+  user_id: string;
+  role: MemberRole;
+  active: boolean;
+};
+export const updateMember = (membershipId: string, payload: MemberUpdate) =>
+  request<MemberUpdateResponse>(
+    `/members/${encodeURIComponent(membershipId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
 
 export type ExperimentStatus = "draft" | "running" | "completed" | "failed";
 export type MetricType = "number" | "text" | "boolean" | "json";
@@ -213,6 +231,7 @@ export type ExperimentResult = {
   created_at: string;
   creator_id: string;
   metrics: Metric[];
+  experiment?: Experiment;
 };
 export type Experiment = {
   id: string;
@@ -325,6 +344,8 @@ export const appendExperimentResult = (
     input_summary?: string;
     output_summary?: string;
     metrics: MetricInput[];
+    terminal_status?: "completed" | "failed";
+    transition_reason?: string;
   },
 ) =>
   request<ExperimentResult>(`/experiments/${id}/results`, {

@@ -109,7 +109,7 @@ def update_experiment(experiment_id: UUID, payload: ExperimentUpdate, request: R
     state = _session(db, session_token); tenant = _mutation(request, db, state, x_csrf_token, csrf_token)
     try:
         with db.begin():
-            _set_context(db, state, tenant); item = ExperimentService(ExperimentRepository(db)).update(tenant, experiment_id, payload)
+            _set_context(db, state, tenant); item = ExperimentService(ExperimentRepository(db)).update(tenant, state["user_id"], experiment_id, payload)
     except ValueError as exc:
         raise HTTPException(409, "La transición de estado no es válida.") from exc
     if not item: raise HTTPException(404, "No se encontró el experimento.")
