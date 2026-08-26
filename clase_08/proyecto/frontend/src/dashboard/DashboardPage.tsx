@@ -36,6 +36,7 @@ import {
 } from "../components/ui/table";
 import { collectDashboardExportRows } from "./dashboardExport";
 import { DateRangePicker } from "./DateRangePicker";
+import { validateCalendarDateRange } from "./calendarDateRange";
 
 const today = () => format(new Date(), "yyyy-MM-dd");
 const startFor = (days: number) =>
@@ -144,6 +145,7 @@ export function DashboardPage() {
   const [result, setResult] = useState<api.DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [rangeError, setRangeError] = useState("");
   const [reload, setReload] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("charts");
   useEffect(() => {
@@ -178,7 +180,17 @@ export function DashboardPage() {
     setDraftFilters((current) => ({ ...current, [key]: value, page: 1 }));
   const applyFilters = () => setQuery({ ...draftFilters, page: 1 });
   const applyDateRange = ({ from, to }: Pick<Filters, "from" | "to">) => {
+    const validation = validateCalendarDateRange(from, to, 366);
+    if (!validation.valid) {
+      setRangeError(
+        validation.inclusiveDays < 1
+          ? "La fecha final debe ser igual o posterior a la inicial."
+          : "El período debe tener un máximo de 366 días inclusivos.",
+      );
+      return;
+    }
     const next = { ...draftFilters, from, to, page: 1 };
+    setRangeError("");
     setDraftFilters(next);
     setQuery(next);
   };
@@ -210,6 +222,7 @@ export function DashboardPage() {
           <div className="dashboard-actions">
             <Button
               variant="outline"
+              disabled={Boolean(rangeError)}
               onClick={() => void exportXlsx(result, exportQuery)}
             >
               <Download data-icon="inline-start" />
@@ -217,6 +230,7 @@ export function DashboardPage() {
             </Button>
             <Button
               variant="outline"
+              disabled={Boolean(rangeError)}
               onClick={() => void exportPdf(result, exportQuery)}
             >
               <Download data-icon="inline-start" />
@@ -261,6 +275,7 @@ export function DashboardPage() {
           range={{ from: query.from, to: query.to }}
           onApply={applyDateRange}
         />
+        {rangeError && <p role="alert">{rangeError}</p>}
         <label className="dashboard-search">
           Buscar experimentos
           <input

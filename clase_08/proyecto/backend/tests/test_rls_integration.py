@@ -2,7 +2,9 @@
 
 import os
 import unittest
-from uuid import uuid4
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
 
@@ -139,6 +141,72 @@ class RlsIntegrationTests(unittest.TestCase):
             self.assertIsNotNone(connection.execute(
                 text("SELECT append_audit_event(NULL,NULL,'auth.recovery.request','rate_limited','resource','{}'::jsonb)")
             ).scalar_one())
+
+    def test_dashboard_and_audit_repositories_use_inclusive_date_ranges(self) -> None:
+            from app.api.audit import AuditQuery
+            from app.repositories.audit import AuditRepository
+            from app.repositories.dashboard import DashboardRepository
+
+            selected_day = date(2026, 2, 3)
+            start = datetime(2026, 2, 3, tzinfo=UTC)
+            late_to = start + timedelta(days=1) - timedelta(microseconds=1)
+            next_day = start + timedelta(days=1)
+            dashboard_ids = (uuid4(), uuid4(), uuid4())
+            audit_experiment_id = uuid4()
+            audit_ids = (uuid4(), uuid4(), uuid4())
+
+            with self.engine.connect() as connection:
+                transaction = connection.begin()
+                try:
+                    self._context(connection, self.user_a, self.tenant_a)
+                    for experiment_id, created_at in zip(dashboard_ids, (start, late_to, next_day), strict=True):
+                        connection.execute(
+                            text("INSERT INTO experiments (id, tenant_id, creator_id, name, status, created_at) VALUES (:id, :tenant, :actor, :name, 'running', :created_at)"),
+                            {"id": experiment_id, "tenant": self.tenant_a, "actor": self.user_a, "name": f"dashboard-{experiment_id}", "created_at": created_at},
+                        )
+                    self._context(connection, self.user_b, self.tenant_b)
+                    connection.execute(
+                        text("INSERT INTO experiments (id, tenant_id, creator_id, name, status, created_at) VALUES (:id, :tenant, :actor, :name, 'running', :created_at)"),
+                        {"id": uuid4(), "tenant": self.tenant_b, "actor": self.user_b, "name": "tenant-b-boundary", "created_at": start},
+                    )
+
+                    self._context(connection, self.user_a, self.tenant_a)
+                    dashboard = DashboardRepository(cast(Any, connection)).overview(self.tenant_a, selected_day, selected_day, "", "", "created_at:asc", 1, 10)
+                    dashboard_item_ids = {UUID(str(item["id"])) for item in dashboard["items"]}
+                    self.assertEqual(dashboard["kpis"]["total"], 2)
+                    self.assertEqual(dashboard["total"], 2)
+                    self.assertEqual(dashboard_item_ids, set(dashboard_ids[:2]))
+                    self.assertNotIn(dashboard_ids[2], dashboard_item_ids)
+
+                    connection.execute(
+                        text("INSERT INTO experiments (id, tenant_id, creator_id, name, status, created_at) VALUES (:id, :tenant, :actor, :name, 'running', :created_at)"),
+                        {"id": audit_experiment_id, "tenant": self.tenant_a, "actor": self.user_a, "name": f"audit-{audit_experiment_id}", "created_at": start},
+                    )
+                    for transition_id, occurred_at in zip(audit_ids, (start, late_to, next_day), strict=True):
+                        connection.execute(
+                            text("INSERT INTO experiment_status_transitions (id, tenant_id, experiment_id, previous_status, next_status, actor_id, occurred_at) VALUES (:id, :tenant, :experiment, 'draft', 'running', :actor, :occurred_at)"),
+                            {"id": transition_id, "tenant": self.tenant_a, "experiment": audit_experiment_id, "actor": self.user_a, "occurred_at": occurred_at},
+                        )
+
+                    date_bounds = AuditQuery(**cast(Any, {"from": selected_day.isoformat(), "to": selected_day.isoformat()}))
+                    assert date_bounds.from_at is not None and date_bounds.to_at is not None
+                    items, total = AuditRepository(cast(Any, connection)).list(
+                        self.tenant_a, page=1, per_page=10, from_at=date_bounds.from_at, to_at=date_bounds.to_at,
+                        actor_id=None, action="experiment.status_transition", outcome=None, search=str(audit_experiment_id),
+                    )
+                    self.assertEqual(total, 2)
+                    self.assertEqual({UUID(item["id"]) for item in items}, set(audit_ids[:2]))
+                    self.assertNotIn(audit_ids[2], {UUID(item["id"]) for item in items})
+
+                    exact_bounds = AuditQuery(**cast(Any, {"from": start, "to": late_to}))
+                    assert exact_bounds.from_at is not None and exact_bounds.to_at is not None
+                    _, exact_total = AuditRepository(cast(Any, connection)).list(
+                        self.tenant_a, page=1, per_page=10, from_at=exact_bounds.from_at, to_at=exact_bounds.to_at,
+                        actor_id=None, action="experiment.status_transition", outcome=None, search=str(audit_experiment_id),
+                    )
+                    self.assertEqual(exact_total, 1)
+                finally:
+                    transaction.rollback()
 
     def test_pooled_connection_does_not_retain_context(self) -> None:
         with self.engine.begin() as connection:

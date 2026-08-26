@@ -492,7 +492,7 @@ describe("users directory", () => {
     deactivateButtons.forEach((button) => expect(button).toBeDisabled());
   });
 
-  it("edits roles from equivalent desktop and mobile row actions", async () => {
+  it("uses an ordered, spaced role-edit footer and protects role updates", async () => {
     vi.mocked(getSession).mockResolvedValueOnce(adminSession);
     vi.mocked(apiClient.getMembers)
       .mockResolvedValueOnce(membersResponse)
@@ -508,14 +508,33 @@ describe("users directory", () => {
     });
     renderAt("/users?page=2&per_page=20");
 
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", {
+          name: "Editar rol de ana@equipo.edu",
+        })
+      )[0],
+    );
+    const dialog = screen.getByRole("dialog", { name: "Editar rol" });
+    const footer = dialog.querySelector(".dialog-footer");
+    expect(footer).toHaveClass("dialog-footer");
     expect(
-      await screen.findAllByRole("button", {
-        name: "Editar rol de ana@equipo.edu",
-      }),
-    ).toHaveLength(2);
+      Array.from(footer?.querySelectorAll("button") ?? []).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Cancelar", "Guardar cambios"]);
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveClass(
+      "button-outline",
+    );
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toHaveClass(
+      "button-primary",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(
-      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" }),
-    ).toHaveLength(2);
+      screen.queryByRole("dialog", { name: "Editar rol" }),
+    ).not.toBeInTheDocument();
+    expect(apiClient.updateMember).not.toHaveBeenCalled();
+
     fireEvent.click(
       screen.getAllByRole("button", {
         name: "Editar rol de ana@equipo.edu",
@@ -525,7 +544,6 @@ describe("users directory", () => {
       target: { value: "viewer" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-
     expect(apiClient.updateMember).toHaveBeenCalledWith("member-1", {
       role: "viewer",
     });
@@ -534,7 +552,7 @@ describe("users directory", () => {
     );
   });
 
-  it("confirms deactivation, reports failures, and reactivates without DELETE", async () => {
+  it("confirms destructive deactivation and non-destructive reactivation before one guarded mutation", async () => {
     vi.mocked(getSession).mockResolvedValueOnce(adminSession);
     vi.mocked(apiClient.getMembers)
       .mockResolvedValueOnce(membersResponse)
@@ -561,11 +579,15 @@ describe("users directory", () => {
         })
       )[0],
     );
-    expect(
-      screen.getByRole("alertdialog", {
-        name: "¿Querés desactivar a esta persona?",
-      }),
-    ).toBeInTheDocument();
+    const deactivateDialog = screen.getByRole("alertdialog", {
+      name: "¿Querés desactivar a ana@equipo.edu?",
+    });
+    expect(deactivateDialog).toHaveTextContent(
+      "ana@equipo.edu dejará de tener acceso",
+    );
+    expect(screen.getByRole("button", { name: "Desactivar" })).toHaveClass(
+      "button-destructive",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(apiClient.updateMember).not.toHaveBeenCalled();
 
@@ -581,17 +603,34 @@ describe("users directory", () => {
       screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" })[0],
     );
     fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
-    expect(
+    const reactivate = (
       await screen.findAllByRole("button", {
         name: "Reactivar a ana@equipo.edu",
-      }),
-    ).toHaveLength(2);
+      })
+    )[0];
+    fireEvent.click(reactivate);
+    const reactivateDialog = screen.getByRole("alertdialog", {
+      name: "¿Querés reactivar a ana@equipo.edu?",
+    });
+    expect(reactivateDialog).toHaveTextContent(
+      "ana@equipo.edu recuperará el acceso",
+    );
+    expect(screen.getByRole("button", { name: "Reactivar" })).toHaveClass(
+      "button-primary",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(apiClient.updateMember).toHaveBeenCalledTimes(2);
+
     fireEvent.click(
       screen.getAllByRole("button", { name: "Reactivar a ana@equipo.edu" })[0],
     );
+    const confirm = screen.getByRole("button", { name: "Reactivar" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
     expect(apiClient.updateMember).toHaveBeenLastCalledWith("member-1", {
       active: true,
     });
+    expect(apiClient.updateMember).toHaveBeenCalledTimes(3);
   });
 });
 

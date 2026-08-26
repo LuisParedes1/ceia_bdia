@@ -241,11 +241,22 @@ describe("AuditPage", () => {
       target: { value: "2026-01-01" },
     });
     fireEvent.change(screen.getByLabelText("Hasta"), {
-      target: { value: "2026-02-15" },
+      target: { value: "2026-01-31" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /aplicar filtros/i }));
+    await waitFor(() =>
+      expect(api.getAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from: "2026-01-01", to: "2026-01-31" }),
+      ),
+    );
+    const validRequestCount = vi.mocked(api.getAuditEvents).mock.calls.length;
+    fireEvent.change(screen.getByLabelText("Hasta"), {
+      target: { value: "2026-02-01" },
     });
     fireEvent.click(screen.getByRole("button", { name: /aplicar filtros/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /máximo 31 días/i,
     );
+    expect(api.getAuditEvents).toHaveBeenCalledTimes(validRequestCount);
   });
 });

@@ -40,6 +40,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../components/ui/tooltip";
+import { validateCalendarDateRange } from "../dashboard/calendarDateRange";
 
 const pageSizes = [10, 20, 25, 50, 100];
 const actions: Record<string, string> = {
@@ -100,16 +101,6 @@ const defaults = (): Filters => ({
   page: 1,
   per_page: 25,
 });
-const validRange = (from: string, to: string) => {
-  const start = new Date(`${from}T00:00:00`);
-  const end = new Date(`${to}T00:00:00`);
-  return (
-    !Number.isNaN(start.valueOf()) &&
-    !Number.isNaN(end.valueOf()) &&
-    end >= start &&
-    (end.valueOf() - start.valueOf()) / 86400000 <= 30
-  );
-};
 function queryFrom(params: URLSearchParams): Filters {
   const fallback = defaults();
   const page = Number(params.get("page"));
@@ -246,8 +237,8 @@ export function AuditPage() {
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [selected, setSelected] = useState<api.AuditEvent | null>(null);
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- browser navigation is external state, not a local render loop.
   useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- browser navigation is external state, not a local render loop.
     setDraft(query);
   }, [query]);
   useEffect(() => {
@@ -311,7 +302,7 @@ export function AuditPage() {
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!validRange(draft.from, draft.to)) {
+    if (!validateCalendarDateRange(draft.from, draft.to, 31).valid) {
       setError(
         "El período debe ser válido y tener un máximo 31 días inclusivos.",
       );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,14 +35,17 @@ export function ConfirmDialog({
   destructive = false,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
 
   const confirm = async () => {
-    if (pending || disabled) return;
+    if (pendingRef.current || disabled) return;
+    pendingRef.current = true;
     setPending(true);
     try {
       await onConfirm();
       onOpenChange(false);
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   };
@@ -58,12 +61,16 @@ export function ConfirmDialog({
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending || disabled}>
+          <AlertDialogCancel
+            disabled={pending || disabled}
+            aria-busy={pending || undefined}
+          >
             {cancelLabel}
           </AlertDialogCancel>
           <AlertDialogAction
             className={cn(destructive && "button-destructive")}
             disabled={pending || disabled}
+            aria-busy={pending || undefined}
             onClick={(event) => {
               event.preventDefault();
               void confirm();

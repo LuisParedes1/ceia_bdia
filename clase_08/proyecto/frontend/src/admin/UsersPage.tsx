@@ -145,11 +145,13 @@ function CreateDialog({
   const [role, setRole] = useState<api.MemberRole>("viewer");
   const [touched, setTouched] = useState(false);
   const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setTouched(true);
-    if (!valid) return;
+    if (!valid || submitting) return;
+    setSubmitting(true);
     try {
       await api.createMember(email, role);
       onCreated(
@@ -161,10 +163,15 @@ function CreateDialog({
           ? error.message
           : "No se pudo agregar a la persona.",
       );
+    } finally {
+      setSubmitting(false);
     }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => !submitting && onOpenChange(nextOpen)}
+    >
       <DialogContent aria-describedby="create-member-description">
         <div className="dialog-header">
           <DialogTitle>Agregar persona</DialogTitle>
@@ -180,6 +187,7 @@ function CreateDialog({
                 id="member-email"
                 type="email"
                 value={email}
+                disabled={submitting}
                 onChange={(event) => setEmail(event.target.value)}
                 onBlur={() => setTouched(true)}
                 aria-invalid={(touched && !valid) || undefined}
@@ -198,6 +206,7 @@ function CreateDialog({
               <select
                 id="member-role"
                 value={role}
+                disabled={submitting}
                 onChange={(event) =>
                   setRole(event.target.value as api.MemberRole)
                 }
@@ -207,7 +216,25 @@ function CreateDialog({
                 <option value="viewer">Consulta</option>
               </select>
             </Field>
-            <Button type="submit">Agregar persona</Button>
+            <div className="dialog-footer">
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={submitting}
+                  aria-busy={submitting || undefined}
+                >
+                  Cancelar
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                disabled={submitting}
+                aria-busy={submitting || undefined}
+              >
+                {submitting ? "Agregando…" : "Agregar persona"}
+              </Button>
+            </div>
             {message && (
               <p
                 role={message.startsWith("La persona") ? "status" : "alert"}
@@ -239,13 +266,24 @@ function EditRoleDialog({
   const [role, setRole] = useState<api.MemberRole>(
     () => member?.role ?? "viewer",
   );
+  const [submitting, setSubmitting] = useState(false);
   if (!member) return null;
-  const submit = (event: FormEvent) => {
+  const isBusy = busy || submitting;
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    void onSubmit(role);
+    if (isBusy || role === member.role) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(role);
+    } finally {
+      setSubmitting(false);
+    }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => !isBusy && onOpenChange(nextOpen)}
+    >
       <DialogContent aria-describedby="edit-member-role-description">
         <div className="dialog-header">
           <DialogTitle>Editar rol</DialogTitle>
@@ -260,7 +298,7 @@ function EditRoleDialog({
               <select
                 id="edit-member-role"
                 value={role}
-                disabled={busy}
+                disabled={isBusy}
                 onChange={(event) =>
                   setRole(event.target.value as api.MemberRole)
                 }
@@ -272,12 +310,21 @@ function EditRoleDialog({
             </Field>
             <div className="dialog-footer">
               <DialogClose asChild>
-                <Button type="button" variant="outline" disabled={busy}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isBusy}
+                  aria-busy={isBusy || undefined}
+                >
                   Cancelar
                 </Button>
               </DialogClose>
-              <Button type="submit" disabled={busy || role === member.role}>
-                {busy ? "Guardando…" : "Guardar cambios"}
+              <Button
+                type="submit"
+                disabled={isBusy || role === member.role}
+                aria-busy={isBusy || undefined}
+              >
+                {isBusy ? "Guardando…" : "Guardar cambios"}
               </Button>
             </div>
           </FieldGroup>
@@ -375,6 +422,7 @@ export function UsersPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<api.Member | null>(null);
   const [deactivating, setDeactivating] = useState<api.Member | null>(null);
+  const [reactivating, setReactivating] = useState<api.Member | null>(null);
   const [pendingMemberId, setPendingMemberId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
@@ -472,12 +520,7 @@ export function UsersPage({
       actions.push({
         label: `Reactivar a ${member.email}`,
         icon: UserRoundCheck,
-        onClick: () =>
-          void mutateMember(
-            member,
-            { active: true },
-            "La persona fue reactivada.",
-          ),
+        onClick: () => setReactivating(member),
         disabled: busy,
         busy,
       });
@@ -693,8 +736,8 @@ export function UsersPage({
           <ConfirmDialog
             open={!!deactivating}
             onOpenChange={(open) => !open && setDeactivating(null)}
-            title="¿Querés desactivar a esta persona?"
-            description="Esta persona dejará de tener acceso al espacio de trabajo."
+            title={`¿Querés desactivar a ${deactivating?.email ?? "esta persona"}?`}
+            description={`${deactivating?.email ?? "Esta persona"} dejará de tener acceso al espacio de trabajo.`}
             confirmLabel="Desactivar"
             destructive
             onConfirm={() =>
@@ -702,6 +745,20 @@ export function UsersPage({
                 deactivating!,
                 { active: false },
                 "La persona fue desactivada.",
+              )
+            }
+          />
+          <ConfirmDialog
+            open={!!reactivating}
+            onOpenChange={(open) => !open && setReactivating(null)}
+            title={`¿Querés reactivar a ${reactivating?.email ?? "esta persona"}?`}
+            description={`${reactivating?.email ?? "Esta persona"} recuperará el acceso al espacio de trabajo.`}
+            confirmLabel="Reactivar"
+            onConfirm={() =>
+              mutateMember(
+                reactivating!,
+                { active: true },
+                "La persona fue reactivada.",
               )
             }
           />
