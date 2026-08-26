@@ -473,7 +473,11 @@ export function UsersPage({
         label: `Reactivar a ${member.email}`,
         icon: UserRoundCheck,
         onClick: () =>
-          void mutateMember(member, { active: true }, "La persona fue reactivada."),
+          void mutateMember(
+            member,
+            { active: true },
+            "La persona fue reactivada.",
+          ),
         disabled: busy,
         busy,
       });
@@ -674,45 +678,45 @@ export function UsersPage({
         open={!!selected}
         onOpenChange={(open) => !open && setSelected(null)}
       />
-          {canManage && (
-            <>
-              <EditRoleDialog
-                key={editing?.user_id ?? "none"}
-                member={editing}
-                open={!!editing}
-                busy={pendingMemberId === editing?.user_id}
-                onOpenChange={(open) => !open && setEditing(null)}
-                onSubmit={(role) =>
-                  mutateMember(editing!, { role }, "El rol fue actualizado.")
-                }
-              />
-              <ConfirmDialog
-                open={!!deactivating}
-                onOpenChange={(open) => !open && setDeactivating(null)}
-                title="¿Querés desactivar a esta persona?"
-                description="Esta persona dejará de tener acceso al espacio de trabajo."
-                confirmLabel="Desactivar"
-                destructive
-                onConfirm={() =>
-                  mutateMember(
-                    deactivating!,
-                    { active: false },
-                    "La persona fue desactivada.",
-                  )
-                }
-              />
-              <CreateDialog
-                open={createOpen}
-                onOpenChange={setCreateOpen}
-                onCreated={(message) => {
-                  setSuccess(message);
-                  setCreateOpen(false);
-                  setLoading(true);
-                  setRetry((value) => value + 1);
-                }}
-              />
-            </>
-          )}
+      {canManage && (
+        <>
+          <EditRoleDialog
+            key={editing?.user_id ?? "none"}
+            member={editing}
+            open={!!editing}
+            busy={pendingMemberId === editing?.user_id}
+            onOpenChange={(open) => !open && setEditing(null)}
+            onSubmit={(role) =>
+              mutateMember(editing!, { role }, "El rol fue actualizado.")
+            }
+          />
+          <ConfirmDialog
+            open={!!deactivating}
+            onOpenChange={(open) => !open && setDeactivating(null)}
+            title="¿Querés desactivar a esta persona?"
+            description="Esta persona dejará de tener acceso al espacio de trabajo."
+            confirmLabel="Desactivar"
+            destructive
+            onConfirm={() =>
+              mutateMember(
+                deactivating!,
+                { active: false },
+                "La persona fue desactivada.",
+              )
+            }
+          />
+          <CreateDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            onCreated={(message) => {
+              setSuccess(message);
+              setCreateOpen(false);
+              setLoading(true);
+              setRetry((value) => value + 1);
+            }}
+          />
+        </>
+      )}
     </section>
   );
 }
