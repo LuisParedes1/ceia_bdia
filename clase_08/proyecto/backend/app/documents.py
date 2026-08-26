@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import _csrf, _session, _tenant_context, db_session
 from app.core.config import settings
+from app.audit import append_audit_event
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 logger = logging.getLogger(__name__)
@@ -368,8 +369,10 @@ async def upload_document(request: Request, file: Annotated[UploadFile, File()],
     try:
         with db.begin():
             _set_context(db, state, tenant)
+            # pi-lens-ignore: python-sql-injection
             db.execute(text("INSERT INTO documents (id,tenant_id,created_by,name,object_key,content_type,size_bytes,sha256,ingestion_status) VALUES (:id,:tenant,:user,:name,:key,:type,:size,:digest,'pending')"),
-                       {"id": document_id, "tenant": tenant, "user": state["user_id"], "name": file.filename, "key": asset.object_key, "type": expected, "size": len(data), "digest": sha256(data).hexdigest()})
+{"id": document_id, "tenant": tenant, "user": state["user_id"], "name": file.filename, "key": asset.object_key, "type": expected, "size": len(data), "digest": sha256(data).hexdigest()})
+            append_audit_event(db, "document.upload", "success", state["user_id"], tenant, f"document:{document_id}", {"content_type": expected, "size_bytes": len(data)})
             _store().put(asset, data, expected)
     except Exception as exc: raise HTTPException(503, "Private object storage is unavailable.") from exc
     return {"id": str(document_id), "name": file.filename, "content_type": expected, "size_bytes": len(data), "ingestion_status": "pending"}
@@ -397,8 +400,9 @@ def ingest_document(document_id: UUID, request: Request, session_token: Annotate
     try:
         with db.begin():
             _set_context(db, state, tenant)
-            row = db.execute(text("SELECT object_key,content_type,sha256 FROM documents WHERE id=:id AND tenant_id=:tenant FOR UPDATE"), {"id": document_id, "tenant": tenant}).mappings().first()
+            row = db.execute(text("SELECT object_key,content_type,sha256,ingestion_status FROM documents WHERE id=:id AND tenant_id=:tenant FOR UPDATE"), {"id": document_id, "tenant": tenant}).mappings().first()
             if not row: raise HTTPException(404, "Document not found.")
+            append_audit_event(db, "document.ingest.reprocessed" if row["ingestion_status"] == "ready" else "document.ingest.started", "success", state["user_id"], tenant, f"document:{document_id}", {})
             db.execute(text("UPDATE documents SET ingestion_status='processing' WHERE id=:id AND tenant_id=:tenant"), {"id": document_id, "tenant": tenant})
             data = _store().get(AuthorizedAsset(row["object_key"], str(tenant)))
             if sha256(data).hexdigest() != row["sha256"]: raise RuntimeError("stored object integrity mismatch")

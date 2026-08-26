@@ -208,6 +208,43 @@ export const updateMember = (membershipId: string, payload: MemberUpdate) =>
     },
   );
 
+export type AuditSource = "audit" | "experiment_status" | "ingestion";
+export type AuditOutcome = "success" | "denied" | "failed" | "rate_limited";
+export type AuditEvent = {
+  id: string;
+  occurred_at: string;
+  actor: { user_id: string; email: string } | null;
+  action: string;
+  outcome: AuditOutcome | string;
+  resource: string | null;
+  detail: unknown;
+  source: AuditSource;
+};
+export type AuditEventsQuery = {
+  from: string;
+  to: string;
+  search: string;
+  action: string;
+  outcome: string;
+  actor_id: string;
+  page: number;
+  per_page: number;
+};
+export type AuditEventsResponse = {
+  items: AuditEvent[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+};
+export const getAuditEvents = (query: AuditEventsQuery) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== "") params.set(key, String(value));
+  }
+  return request<AuditEventsResponse>(`/audit-events?${params.toString()}`);
+};
+
 export type ExperimentStatus = "draft" | "running" | "completed" | "failed";
 export type MetricType = "number" | "text" | "boolean" | "json";
 export type Metric = {

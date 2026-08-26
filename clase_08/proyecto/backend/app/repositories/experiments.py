@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.experiment_schemas import ResultCreate
+from app.audit import append_audit_event as record_audit_event
 from app.services.pagination import Page
 
 if TYPE_CHECKING:
@@ -26,7 +27,9 @@ class ExperimentRepository:
     def create(self, tenant: UUID, actor: UUID, name: str) -> dict:
         # pi-lens-ignore: python-sql-injection
         row = self.db.execute(text("INSERT INTO experiments (id,tenant_id,creator_id,name,status) VALUES (:id,:tenant,:actor,:name,'draft') RETURNING *"), {"id": uuid4(), "tenant": tenant, "actor": actor, "name": name}).mappings().one()
-        return dict(row)
+        item = dict(row)
+        record_audit_event(self.db, "experiment.created", "success", actor, tenant, f"experiment:{item['id']}", {})
+        return item
 
     def get(self, tenant: UUID, experiment_id: UUID) -> dict | None:
         # pi-lens-ignore: python-sql-injection
@@ -93,13 +96,8 @@ class ExperimentRepository:
         return dict(row) if row else None
 
     def append_audit_event(self, tenant: UUID, actor: UUID, experiment_id: UUID, action: str, previous_archived: bool, archived: bool) -> None:
-        # pi-lens-ignore: python-sql-injection
-        self.db.execute(text("""INSERT INTO audit_events (id,actor_id,tenant_id,action,outcome,resource,metadata)
-            VALUES (:id,:actor,:tenant,:action,'success',:resource,CAST(:metadata AS jsonb))"""), {
-            "id": uuid4(), "actor": actor, "tenant": tenant, "action": action,
-            "resource": f"experiment:{experiment_id}",
-            "metadata": json.dumps({"previous_archived": previous_archived, "archived": archived}),
-        })
+        metadata: dict[str, object] = {} if action == "experiment.renamed" else {"previous_archived": previous_archived, "archived": archived}
+        record_audit_event(self.db, action, "success", actor, tenant, f"experiment:{experiment_id}", metadata)
 
     def append_status_transition(self, tenant: UUID, experiment_id: UUID, previous_status: str, next_status: str, actor: UUID, reason: str | None) -> None:
         # pi-lens-ignore: python-sql-injection
@@ -116,4 +114,6 @@ class ExperimentRepository:
             # pi-lens-ignore: python-sql-injection
             row = self.db.execute(text("INSERT INTO metrics (id,tenant_id,result_id,creator_id,name,value_type,number_value,text_value,boolean_value,json_value,unit,step,recorded_at) VALUES (:id,:tenant,:result,:actor,:name,:type,:number,:text,:boolean,CAST(:json AS jsonb),:unit,:step,:at) RETURNING *"), {"id": uuid4(), "tenant": tenant, "result": result_id, "actor": actor, "name": metric.name, "type": metric.type, "unit": metric.unit, "step": metric.step, "at": metric.timestamp or datetime.now(UTC), **values}).mappings().one()
             metrics.append(dict(row))
-        return {**dict(result), "metrics": metrics}
+        item = {**dict(result), "metrics": metrics}
+        record_audit_event(self.db, "experiment.result_added", "success", actor, tenant, f"experiment:{experiment_id}", {})
+        return item

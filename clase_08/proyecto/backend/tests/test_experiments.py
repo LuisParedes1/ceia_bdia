@@ -78,14 +78,14 @@ class ExperimentTests(unittest.TestCase):
         item = ExperimentService(cast(Any, archived)).update(tenant, actor, experiment, ExperimentUpdate(archived=True))
         self.assertIsNotNone(item)
         self.assertEqual(archived.archive_calls, [(tenant, experiment, True, actor)])
-        self.assertEqual(archived.audit_calls, [(tenant, actor, experiment, "experiment_archived", False, True)])
+        self.assertEqual(archived.audit_calls, [(tenant, actor, experiment, "experiment.archived", False, True)])
         self.assertEqual(len(archived.current["results"]), 1)
         self.assertEqual(len(archived.current["status_history"]), 1)
 
         restored = Repository({"id": experiment, "status": "failed", "archived_at": "yesterday"})
         ExperimentService(cast(Any, restored)).update(tenant, actor, experiment, ExperimentUpdate(archived=False))
         self.assertEqual(restored.archive_calls, [(tenant, experiment, False, actor)])
-        self.assertEqual(restored.audit_calls, [(tenant, actor, experiment, "experiment_restored", True, False)])
+        self.assertEqual(restored.audit_calls, [(tenant, actor, experiment, "experiment.restored", True, False)])
 
     def test_running_or_archived_experiments_reject_forbidden_mutations(self) -> None:
         from uuid import uuid4
@@ -125,7 +125,7 @@ class ExperimentTests(unittest.TestCase):
         repository = Path("app/repositories/experiments.py").read_text()
         self.assertIn("e.archived_at IS NULL", repository)
         self.assertIn("e.archived_at IS NOT NULL", repository)
-        self.assertIn("INSERT INTO audit_events", repository)
+        self.assertIn("record_audit_event", repository)
 
     def test_status_transition_reason_is_trimmed_bounded_and_requires_status(self) -> None:
         from pydantic import ValidationError

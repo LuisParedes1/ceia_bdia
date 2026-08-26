@@ -30,6 +30,7 @@ vi.mock("./api", async (importOriginal) => ({
   createMember: vi.fn(),
   getMembers: vi.fn(),
   updateMember: vi.fn(),
+  getAuditEvents: vi.fn(),
 }));
 afterEach(() => {
   cleanup();
@@ -335,6 +336,43 @@ describe("application routes", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: "Personas" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the audit route and navigation only to administrators", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      per_page: 50,
+      pages: 1,
+    });
+    vi.mocked(apiClient.getAuditEvents).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      per_page: 25,
+      pages: 1,
+    });
+    renderAt("/audit");
+    expect(
+      await screen.findByRole("heading", { name: "Auditoría" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Auditoría" })).toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(getSession).mockResolvedValueOnce({
+      ...adminSession,
+      role: "member",
+      capabilities: [],
+    });
+    renderAt("/audit");
+    expect(
+      await screen.findByRole("heading", { name: "Panel" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Auditoría" }),
     ).not.toBeInTheDocument();
   });
 });

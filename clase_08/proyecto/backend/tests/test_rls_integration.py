@@ -82,21 +82,63 @@ class RlsIntegrationTests(unittest.TestCase):
         experiment_id = uuid4()
         with self.engine.begin() as connection:
             self._context(connection, self.user_a, self.tenant_a)
-            connection.execute(
-                text("""INSERT INTO experiments (id,tenant_id,creator_id,name,status,archived_at,archived_by)
-                    VALUES (:id,:tenant,:actor,'archived','completed',now(),:actor)"""),
-                {"id": experiment_id, "tenant": self.tenant_a, "actor": self.user_a},
-            )
+            connection.execute(text("INSERT INTO experiments (id,tenant_id,creator_id,name,status,archived_at,archived_by) VALUES (:id,:tenant,:actor,'archived','completed',now(),:actor)"), {"id": experiment_id, "tenant": self.tenant_a, "actor": self.user_a})
         with self.engine.begin() as connection:
             self._context(connection, self.user_b, self.tenant_b)
-            self.assertEqual(
-                connection.execute(text("SELECT count(*) FROM experiments WHERE id=:id AND archived_at IS NOT NULL"), {"id": experiment_id}).scalar_one(),
-                0,
-            )
+            self.assertEqual(connection.execute(text("SELECT count(*) FROM experiments WHERE id=:id AND archived_at IS NOT NULL"), {"id": experiment_id}).scalar_one(), 0)
         with self.assertRaises(Exception):
             with self.engine.begin() as connection:
                 self._context(connection, self.user_a, self.tenant_a)
                 connection.execute(text("UPDATE experiments SET status='failed' WHERE id=:id"), {"id": experiment_id})
+
+    def test_audit_definer_is_the_only_append_path_and_global_count_bypasses_force_rls(self) -> None:
+        resource = f"recovery-{uuid4().hex}"
+        with self.assertRaises(Exception):
+            with self.engine.begin() as connection:
+                self._context(connection, self.user_a, self.tenant_a)
+                connection.execute(text("INSERT INTO audit_events (id,actor_id,tenant_id,action,outcome,metadata) VALUES (:id,:actor,:tenant,'auth.login','success','{}'::jsonb)"), {"id": uuid4(), "actor": self.user_a, "tenant": self.tenant_a})
+        for statement in ("UPDATE audit_events SET outcome='failed' WHERE false", "DELETE FROM audit_events WHERE false", "UPDATE ingestion_runs SET status='failed' WHERE false", "DELETE FROM ingestion_runs WHERE false"):
+            with self.subTest(statement=statement), self.assertRaises(Exception):
+                with self.engine.begin() as connection:
+                    self._context(connection, self.user_a, self.tenant_a)
+                    connection.execute(text(statement))
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_a, self.tenant_a)
+            event_id = connection.execute(text("SELECT append_audit_event(:actor,:tenant,'auth.login','success','session',CAST(:metadata AS jsonb))"), {"actor": self.user_a, "tenant": self.tenant_a, "metadata": "{}"}).scalar_one()
+            self.assertIsNotNone(event_id)
+            self.assertEqual(connection.execute(text("SELECT count(*) FROM audit_events WHERE id=:id"), {"id": event_id}).scalar_one(), 0)
+            self.assertEqual(connection.execute(text("SELECT recovery_request_count(:resource)"), {"resource": resource}).scalar_one(), 0)
+            connection.execute(text("SELECT append_audit_event(NULL,NULL,'auth.recovery.request','success',:resource,CAST(:metadata AS jsonb))"), {"resource": resource, "metadata": "{}"})
+            self.assertEqual(connection.execute(text("SELECT recovery_request_count(:resource)"), {"resource": resource}).scalar_one(), 1)
+        for action, outcome, metadata in (("unknown.action", "success", "{}"), ("auth.login", "accepted", "{}"), ("auth.login", "success", '{"token":"secret"}')):
+            with self.subTest(action=action, outcome=outcome, metadata=metadata), self.assertRaises(Exception):
+                with self.engine.begin() as connection:
+                    self._context(connection, self.user_a, self.tenant_a)
+                    connection.execute(text("SELECT append_audit_event(:actor,:tenant,:action,:outcome,'resource',CAST(:metadata AS jsonb))"), {"actor": self.user_a, "tenant": self.tenant_a, "action": action, "outcome": outcome, "metadata": metadata})
+
+    def test_audit_definer_rejects_forged_request_context_and_global_events(self) -> None:
+        calls = (
+            (self.user_b, self.tenant_a, "auth.login", "success"),
+            (self.user_a, self.tenant_b, "auth.login", "success"),
+            (None, None, "auth.login", "success"),
+        )
+        for actor, tenant, action, outcome in calls:
+            with self.subTest(actor=actor, tenant=tenant, action=action), self.assertRaises(Exception):
+                with self.engine.begin() as connection:
+                    self._context(connection, self.user_a, self.tenant_a)
+                    connection.execute(
+                        text("SELECT append_audit_event(:actor,:tenant,:action,:outcome,'resource','{}'::jsonb)"),
+                        {"actor": actor, "tenant": tenant, "action": action, "outcome": outcome},
+                    )
+        with self.engine.begin() as connection:
+            self._context(connection, self.user_a, self.tenant_a)
+            self.assertIsNotNone(connection.execute(
+                text("SELECT append_audit_event(:actor,:tenant,'auth.login','success','resource','{}'::jsonb)"),
+                {"actor": self.user_a, "tenant": self.tenant_a},
+            ).scalar_one())
+            self.assertIsNotNone(connection.execute(
+                text("SELECT append_audit_event(NULL,NULL,'auth.recovery.request','rate_limited','resource','{}'::jsonb)")
+            ).scalar_one())
 
     def test_pooled_connection_does_not_retain_context(self) -> None:
         with self.engine.begin() as connection:

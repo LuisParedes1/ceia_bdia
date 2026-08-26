@@ -17,6 +17,7 @@ from app.api.assistant import router as assistant_router
 from app.api.auth import router as identity_router
 from app.api.experiments import router as experiments_router
 from app.api.dashboard import router as dashboard_router
+from app.api.audit import router as audit_router
 from app.documents import router as documents_router
 from app.core.config import settings
 
@@ -105,6 +106,7 @@ app.add_middleware(
 app.include_router(identity_router)
 app.include_router(experiments_router)
 app.include_router(dashboard_router)
+app.include_router(audit_router)
 app.include_router(documents_router)
 app.include_router(assistant_router)
 

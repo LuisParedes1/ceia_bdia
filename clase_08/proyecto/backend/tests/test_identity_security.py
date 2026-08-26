@@ -67,7 +67,7 @@ class IdentitySecurityTests(unittest.TestCase):
             response = recovery_request(RecoveryRequest(email="known@example.com"), database)  # type: ignore[arg-type]
         self.assertEqual(response, {"message": "Si la cuenta existe, se enviaron las instrucciones de recuperación."})
         self.assertEqual(len(database.calls), 2)
-        self.assertIn("count(*)", database.calls[0][0])
+        self.assertIn("recovery_request_count", database.calls[0][0])
         send_recovery.assert_not_called()
 
     def test_invalid_email_payloads_are_rejected_before_identity_side_effects(self) -> None:

@@ -51,11 +51,11 @@ class ExperimentService:
             if item:
                 self.repository.append_audit_event(
                     tenant, actor, experiment_id,
-                    "experiment_archived" if payload.archived else "experiment_restored",
+                    "experiment.archived" if payload.archived else "experiment.restored",
                     currently_archived, payload.archived,
                 )
         elif item and payload.name is not None and payload.name != current.get("name"):
-            self.repository.append_audit_event(tenant, actor, experiment_id, "experiment_renamed", currently_archived, currently_archived)
+            self.repository.append_audit_event(tenant, actor, experiment_id, "experiment.renamed", currently_archived, currently_archived)
         return item
 
     def append_result(self, tenant: UUID, actor: UUID, experiment_id: UUID, payload: ResultCreate) -> dict | None:

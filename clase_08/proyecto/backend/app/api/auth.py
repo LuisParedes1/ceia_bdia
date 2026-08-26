@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.audit import append_audit_event
 from app.providers.mail import send_recovery
 from app.security.password import hash_password, verify_password
 from app.security.tokens import TokenCodec
@@ -185,11 +186,13 @@ def _now() -> datetime:
 
 
 def _audit(db: Session, action: str, outcome: str, actor: UUID | None = None, tenant: UUID | None = None, resource: str | None = None, metadata: dict[str, object] | None = None) -> None:
-    # pi-lens-ignore: python-sql-injection
-    db.execute(
-        text("INSERT INTO audit_events (id, actor_id, tenant_id, action, outcome, resource, metadata) VALUES (:id,:actor,:tenant,:action,:outcome,:resource,CAST(:metadata AS jsonb))"),
-        {"id": uuid4(), "actor": actor, "tenant": tenant, "action": action, "outcome": outcome, "resource": resource, "metadata": json.dumps(metadata or {})},
-    )
+    """Compatibility seam for existing identity call sites; storage validates all values."""
+    actions = {
+        "registration": "auth.registration", "login": "auth.login", "logout": "auth.logout",
+        "recovery_request": "auth.recovery.request", "recovery_confirm": "auth.recovery.confirm",
+        "csrf": "security.csrf_denied",
+    }
+    append_audit_event(db, actions.get(action, action), "success" if outcome == "accepted" else outcome, actor, tenant, resource, metadata or {})
 
 
 def _recovery_resource(email: str) -> str:
@@ -208,6 +211,9 @@ def _session(db: Session, raw: str | None) -> dict:
 def _csrf(db: Session, state: dict, request: Request, header: str | None, cookie: str | None) -> None:
     origin = request.headers.get("origin")
     if origin not in settings.backend_cors_origins or not header or header != cookie or _codec().digest(header) != state["csrf_hash"]:
+        if state.get("tenant_id"):
+            # pi-lens-ignore: python-sql-injection
+            db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"user": str(state["user_id"]), "tenant": str(state["tenant_id"])})
         _audit(db, "csrf", "denied", state["user_id"], state.get("tenant_id"))
         db.commit()
         raise HTTPException(status_code=403, detail="Falló la validación de seguridad de la solicitud.")
@@ -268,6 +274,8 @@ def login(payload: LoginPayload, response: Response, db: Session = Depends(db_se
         db.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(user["id"])})
         tenant_id = db.execute(text("SELECT sole_active_membership_tenant(:user)"), {"user": user["id"]}).scalar_one()
         if not tenant_id: raise HTTPException(status_code=403, detail="Se requiere una membresía activa en un espacio de trabajo.")
+        # pi-lens-ignore: python-sql-injection
+        db.execute(text("SELECT set_config('app.tenant_id', :tenant, true)"), {"tenant": str(tenant_id)})
         _issue_session(db, response, user["id"], tenant_id)
         _audit(db, "login", "success", user["id"], tenant_id)
     return {"authenticated": True}
@@ -294,7 +302,10 @@ def session_status(session_token: Annotated[str | None, Cookie()] = None, db: Se
 @router.post("/auth/logout")
 def logout(request: Request, response: Response, session_token: Annotated[str | None, Cookie()] = None, csrf_token: Annotated[str | None, Cookie()] = None, x_csrf_token: Annotated[str | None, Header()] = None, db: Session = Depends(db_session)) -> dict:
     state = _session(db, session_token); _csrf(db, state, request, x_csrf_token, csrf_token)
-    db.execute(text("UPDATE sessions SET revoked_at=now() WHERE id=:id"), {"id": state["id"]}); db.commit()
+    db.execute(text("UPDATE sessions SET revoked_at=now() WHERE id=:id"), {"id": state["id"]})
+    db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"user": str(state["user_id"]), "tenant": str(state["tenant_id"])})
+    _audit(db, "logout", "success", state["user_id"], state.get("tenant_id"))
+    db.commit()
     response.delete_cookie(_SESSION_COOKIE); response.delete_cookie(_CSRF_COOKIE)
     return {"logged_out": True}
 
@@ -303,9 +314,9 @@ def logout(request: Request, response: Response, session_token: Annotated[str | 
 def recovery_request(payload: RecoveryRequest, db: Session = Depends(db_session)) -> dict:
     resource = _recovery_resource(payload.email)
     token: str | None = None
-    count = db.execute(text("SELECT count(*) FROM audit_events WHERE action='recovery_request' AND resource=:resource AND created_at > now() - interval '1 hour'"), {"resource": resource}).scalar_one()
+    count = db.execute(text("SELECT recovery_request_count(:resource)"), {"resource": resource}).scalar_one()
     user = db.execute(text("SELECT id,email FROM users WHERE email=:email"), {"email": payload.email.lower()}).mappings().first() if count < settings.recovery_requests_per_hour else None
-    _audit(db, "recovery_request", "accepted" if count < settings.recovery_requests_per_hour else "rate_limited", user["id"] if user else None, resource=resource)
+    _audit(db, "recovery_request", "accepted" if count < settings.recovery_requests_per_hour else "rate_limited", resource=resource)
     if user:
         token = _recovery_codec().issue()
         db.execute(text("INSERT INTO recovery_tokens (id,user_id,token_hash,expires_at) VALUES (:id,:user,:hash,:expires)"), {"id": uuid4(), "user": user["id"], "hash": _recovery_codec().digest(token), "expires": _now() + timedelta(minutes=settings.recovery_token_ttl_minutes)})
@@ -326,7 +337,10 @@ def recovery_confirm(payload: RecoveryConfirm, db: Session = Depends(db_session)
             raise HTTPException(status_code=400, detail="El código de recuperación no es válido o venció.")
         db.execute(text("UPDATE users SET password_hash=:password,password_setup_required=false WHERE id=:id"), {"password": hash_password(payload.password), "id": row["user_id"]})
         db.execute(text("UPDATE sessions SET revoked_at=now() WHERE user_id=:id AND revoked_at IS NULL"), {"id": row["user_id"]})
-        _audit(db, "recovery_confirm", "success", row["user_id"])
+        tenant_id = db.execute(text("SELECT sole_active_membership_tenant(:user)"), {"user": row["user_id"]}).scalar_one()
+        if tenant_id:
+            db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"user": str(row["user_id"]), "tenant": str(tenant_id)})
+            _audit(db, "recovery_confirm", "success", row["user_id"], tenant_id)
     return {"password_updated": True}
 
 
@@ -392,7 +406,10 @@ def create_or_attach_member(payload: MemberCreate, request: Request, session_tok
             role_id = uuid4(); db.execute(text("INSERT INTO roles (id,tenant_id,name) VALUES (:id,:tenant,:role)"), {"id": role_id, "tenant": tenant, "role": payload.role})
         db.execute(text("INSERT INTO memberships (tenant_id,user_id) VALUES (:tenant,:user) ON CONFLICT DO NOTHING"), {"tenant": tenant, "user": user["id"]})
         db.execute(text("INSERT INTO membership_roles (tenant_id,user_id,role_id) VALUES (:tenant,:user,:role) ON CONFLICT (tenant_id,user_id) DO UPDATE SET role_id=EXCLUDED.role_id"), {"tenant": tenant, "user": user["id"], "role": role_id})
-        _audit(db, "membership_change", "success", state["user_id"], tenant, payload.role)
+        _audit(
+            db, "membership.created", "success", state["user_id"], tenant,
+            f"membership:{user['id']}", {"role": payload.role, "active": True},
+        )
         return {"user_id": str(user["id"]), "role": payload.role}
 
 
@@ -461,20 +478,15 @@ def update_member(
             db.execute(text("UPDATE membership_roles SET role_id=:role WHERE tenant_id=:tenant AND user_id=:user"), {"role": role_id, "tenant": tenant, "user": membership_id})
         if payload.active is not None and payload.active != current["active"]:
             db.execute(text("UPDATE memberships SET active=:active WHERE tenant_id=:tenant AND user_id=:user"), {"active": payload.active, "tenant": tenant, "user": membership_id})
-        _audit(
-            db,
-            "membership_change",
-            "success",
-            state["user_id"],
-            tenant,
-            str(membership_id),
-            {
-                "target_membership_id": str(membership_id),
-                "target_user_id": str(membership_id),
-                "previous_role": current["role"],
-                "new_role": next_role,
-                "previous_active": current["active"],
-                "new_active": next_active,
-            },
-        )
+        resource = f"membership:{membership_id}"
+        if payload.role is not None and payload.role != current["role"]:
+            _audit(
+                db, "membership.role_changed", "success", state["user_id"], tenant, resource,
+                {"previous_role": current["role"], "role": next_role},
+            )
+        if payload.active is not None and payload.active != current["active"]:
+            _audit(
+                db, "membership.activation_changed", "success", state["user_id"], tenant, resource,
+                {"previous_active": current["active"], "active": next_active},
+            )
     return {"membership_id": str(membership_id), "user_id": str(membership_id), "role": next_role, "active": next_active}

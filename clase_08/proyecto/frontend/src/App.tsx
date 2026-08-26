@@ -25,6 +25,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import * as api from "./api";
@@ -40,6 +41,7 @@ import { ExperimentsPage } from "./experiments/ExperimentsPage";
 import { DocumentsPage } from "./documents/DocumentsPage";
 import { AssistantPage } from "./assistant/AssistantPage";
 import { DashboardPage } from "./dashboard/DashboardPage";
+import { AuditPage } from "./audit/AuditPage";
 
 type Auth = {
   session: Session | null;
@@ -107,6 +109,7 @@ const items = [
   { to: "/experiments", label: "Experimentos", icon: FlaskConical },
   { to: "/documents", label: "Documentos", icon: BookOpen },
   { to: "/assistant", label: "Asistente", icon: MessageSquare },
+  { to: "/audit", label: "Auditoría", icon: ShieldCheck },
 ];
 function MainLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -121,8 +124,9 @@ function MainLayout({ children }: { children: ReactNode }) {
           {items
             .filter(
               (item) =>
-                item.to !== "/users" ||
-                session?.capabilities.includes("members:manage"),
+                (item.to !== "/users" ||
+                  session?.capabilities.includes("members:manage")) &&
+                (item.to !== "/audit" || session?.role === "admin"),
             )
             .map(({ to, label, icon: Icon }) => (
               <Link
@@ -461,6 +465,14 @@ function UsersRoute() {
     />
   );
 }
+function AuditRoute() {
+  const { session } = useAuth();
+  return session?.role === "admin" ? (
+    <AuditPage />
+  ) : (
+    <Navigate to="/dashboard" replace />
+  );
+}
 function ExperimentsRoute() {
   const { session } = useAuth();
   return <ExperimentsPage canMutate={session?.role !== "viewer"} />;
@@ -492,6 +504,7 @@ function AppRoutes() {
                 <Route path="/experiments" element={<ExperimentsRoute />} />
                 <Route path="/documents" element={<DocumentsRoute />} />
                 <Route path="/assistant" element={<AssistantPage />} />
+                <Route path="/audit" element={<AuditRoute />} />
                 <Route
                   path="*"
                   element={<Navigate to="/dashboard" replace />}

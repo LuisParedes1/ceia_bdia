@@ -301,9 +301,9 @@ class IdentityHttpTests(unittest.TestCase):
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)", (owner["user_id"], owner["tenant_id"]))
-                cursor.execute("SELECT action, metadata FROM audit_events WHERE tenant_id=%s AND resource=%s AND action IN ('experiment_archived', 'experiment_restored') ORDER BY created_at", (owner["tenant_id"], f"experiment:{experiment_id}"))
+                cursor.execute("SELECT action, metadata FROM audit_events WHERE tenant_id=%s AND resource=%s AND action IN ('experiment.archived', 'experiment.restored') ORDER BY created_at", (owner["tenant_id"], f"experiment:{experiment_id}"))
                 audit_rows = cursor.fetchall()
-        self.assertEqual(audit_rows, [("experiment_archived", {"archived": True, "previous_archived": False}), ("experiment_restored", {"archived": False, "previous_archived": True})])
+        self.assertEqual(audit_rows, [("experiment.archived", {"archived": True, "previous_archived": False}), ("experiment.restored", {"archived": False, "previous_archived": True})])
 
     def test_dashboard_live_contract_is_tenant_scoped_and_date_bounded(self) -> None:
         owner_email = f"dashboard-owner-{uuid4()}@example.com"
@@ -533,19 +533,33 @@ class IdentityHttpTests(unittest.TestCase):
         viewer_session, viewer_csrf = self.cookies(viewer_headers)
         self.assertEqual(self.request(f"/api/members/{membership_id}", {"role": "viewer"}, self.csrf_headers(viewer_session, viewer_csrf), "PATCH")[0], 403)
 
+        combined = self.request(
+            f"/api/members/{membership_id}", {"role": "viewer", "active": False}, owner_mutation_headers, "PATCH"
+        )
+        self.assertEqual((combined[0], combined[2]["role"], combined[2]["active"]), (200, "viewer", False))
         database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT action, outcome, resource, metadata FROM audit_events WHERE tenant_id=%s AND actor_id=%s AND action='membership_change' ORDER BY created_at DESC LIMIT 1", (owner["tenant_id"], owner["user_id"]))
-                audit_row = cursor.fetchone()
-                assert audit_row is not None
-                action, outcome, resource, metadata = audit_row
-        self.assertEqual((action, outcome, resource), ("membership_change", "success", membership_id))
-        self.assertEqual(metadata["target_user_id"], membership_id)
-        self.assertEqual(metadata["previous_role"], "member")
-        self.assertEqual(metadata["new_role"], "member")
-        self.assertFalse(metadata["previous_active"])
-        self.assertTrue(metadata["new_active"])
+                cursor.execute("SELECT set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)", (owner["user_id"], owner["tenant_id"]))
+                cursor.execute(
+                        "SELECT action, outcome, resource, metadata FROM audit_events "
+                        "WHERE tenant_id=%s AND actor_id=%s AND resource=%s "
+                        "AND action LIKE 'membership.%%' ORDER BY created_at, id",
+                        (owner["tenant_id"], owner["user_id"], f"membership:{membership_id}"),
+                    )
+                audit_rows = cursor.fetchall()
+        self.assertCountEqual(
+            audit_rows,
+            [
+                ("membership.created", "success", f"membership:{membership_id}", {"role": "viewer", "active": True}),
+                ("membership.role_changed", "success", f"membership:{membership_id}", {"previous_role": "viewer", "role": "member"}),
+                ("membership.activation_changed", "success", f"membership:{membership_id}", {"previous_active": True, "active": False}),
+                ("membership.activation_changed", "success", f"membership:{membership_id}", {"previous_active": False, "active": True}),
+                ("membership.role_changed", "success", f"membership:{membership_id}", {"previous_role": "member", "role": "viewer"}),
+                ("membership.activation_changed", "success", f"membership:{membership_id}", {"previous_active": True, "active": False}),
+            ],
+        )
+
 
 
 if __name__ == "__main__":
