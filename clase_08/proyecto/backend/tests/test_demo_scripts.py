@@ -23,14 +23,17 @@ class DemoScriptTests(unittest.TestCase):
         self.assertIn('("beta", "Beta Evaluation Lab")', source)
         for table in ("experiments", "results", "metrics", "documents", "chunks", "embeddings"):
             self.assertIn(f"INSERT INTO {table}", source)
-        for variable in ("ADMIN_EMAIL", "MEMBER_EMAIL", "VIEWER_EMAIL", "FIXTURE_PASSWORD"):
+        for variable in (
+            "ALPHA_ADMIN_EMAIL", "ALPHA_MEMBER_EMAIL", "ALPHA_VIEWER_EMAIL",
+            "BETA_ADMIN_EMAIL", "BETA_MEMBER_EMAIL", "BETA_VIEWER_EMAIL",
+            "FIXTURE_PASSWORD",
+        ):
             self.assertIn(variable, source)
-        self.assertIn('slug == "alpha"', source)
-        self.assertIn('f"demo-beta-{role}@example.test"', source)
+        self.assertIn("FIXTURE_EMAIL_VARIABLES", source)
+        self.assertIn("pg_insert(users_table)", source)
         self.assertIn("on_conflict_do_update", source)
         self.assertNotIn("DEMO_FIXTURE_PASSWORD", source)
-        self.assertIn("FixedEmbeddingProvider(384)", source)
-        self.assertIn('embed(content, "passage")', source)
+        self.assertNotIn("FIXTURE_EMBEDDING", source)
         for secret_artifact in ("session_token", "recovery_token", "csrf_token"):
             self.assertNotIn(secret_artifact, source)
 
@@ -47,38 +50,35 @@ class DemoScriptTests(unittest.TestCase):
             or (
                 isinstance(node, ast.Assign)
                 and any(
-                    isinstance(target, ast.Name) and target.id == "EMAIL_VARIABLES"
+                    isinstance(target, ast.Name) and target.id == "FIXTURE_EMAIL_VARIABLES"
                     for target in node.targets
                 )
             )
         ]
         namespace: dict[str, object] = {"os": os}
         exec(compile(ast.Module(body=selected, type_ignores=[]), "fixture-environment", "exec"), namespace)
-        load = cast(Callable[[], tuple[dict[str, str], str]], namespace["load_fixture_credentials"])
+        load = cast(Callable[[], tuple[dict[str, dict[str, str]], str]], namespace["load_fixture_credentials"])
         valid = {
-            "ADMIN_EMAIL": " Admin@Example.COM ",
-            "MEMBER_EMAIL": "member@bdia.com",
-            "VIEWER_EMAIL": "viewer@example.com",
+            "ALPHA_ADMIN_EMAIL": " Alpha.Admin@example.com ",
+            "ALPHA_MEMBER_EMAIL": "alpha.member@bdia.com",
+            "ALPHA_VIEWER_EMAIL": "alpha.viewer@example.com",
+            "BETA_ADMIN_EMAIL": "Beta.Admin@example.com",
+            "BETA_MEMBER_EMAIL": "beta.member@bdia.com",
+            "BETA_VIEWER_EMAIL": "beta.viewer@example.com",
             "FIXTURE_PASSWORD": "eight-ok",
         }
         with patch.dict(os.environ, valid, clear=True):
             emails, password = load()
-        self.assertEqual(
-            emails,
-            {
-                "admin": "Admin@example.com",
-                "member": "member@bdia.com",
-                "viewer": "viewer@example.com",
-            },
-        )
+        self.assertEqual(emails["alpha"]["admin"], "Alpha.Admin@example.com")
+        self.assertEqual(emails["beta"]["viewer"], "beta.viewer@example.com")
         self.assertEqual(password, valid["FIXTURE_PASSWORD"])
         self.assertEqual(len(password), 8)
 
         invalid_cases = {
-            "missing": {name: value for name, value in valid.items() if name != "VIEWER_EMAIL"},
-            "reserved-domain": valid | {"VIEWER_EMAIL": "viewer@example.test"},
-            "malformed": valid | {"VIEWER_EMAIL": "not-an-email"},
-            "duplicate": valid | {"VIEWER_EMAIL": "member@BDIA.COM"},
+            "missing": {name: value for name, value in valid.items() if name != "ALPHA_VIEWER_EMAIL"},
+            "reserved-domain": valid | {"ALPHA_VIEWER_EMAIL": "viewer@example.test"},
+            "malformed": valid | {"ALPHA_VIEWER_EMAIL": "not-an-email"},
+            "duplicate": valid | {"ALPHA_VIEWER_EMAIL": "alpha.member@BDIA.COM"},
             "short-password": valid | {"FIXTURE_PASSWORD": "seven!!"},
         }
         for case, environment in invalid_cases.items():
@@ -104,7 +104,11 @@ class DemoScriptTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertEqual(source.count("student-project-pgadmin:"), 2)
-        for variable in ("ADMIN_EMAIL", "MEMBER_EMAIL", "VIEWER_EMAIL", "FIXTURE_PASSWORD"):
+        for variable in (
+            "ALPHA_ADMIN_EMAIL", "ALPHA_MEMBER_EMAIL", "ALPHA_VIEWER_EMAIL",
+            "BETA_ADMIN_EMAIL", "BETA_MEMBER_EMAIL", "BETA_VIEWER_EMAIL",
+            "FIXTURE_PASSWORD",
+        ):
             self.assertIn(f"{variable}: ${{{variable}}}", source)
         self.assertIn("http://embeddings-api:8000", source)
         self.assertIn("${EMBEDDINGS_API_PORT:-8011}:8000", source)

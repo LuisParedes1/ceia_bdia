@@ -6,6 +6,7 @@ import json
 import os
 import re
 import unittest
+from pathlib import Path
 from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -219,6 +220,16 @@ class AuditHttpTests(unittest.TestCase):
             elif item["actor"] is not None:
                 self.assertEqual(set(item["actor"]), {"user_id", "email"})
                 self.assertEqual(item["actor"]["email"], admin_email)
+
+
+class PlatformAuditContractTests(unittest.TestCase):
+    def test_platform_denials_use_fixed_safe_audit_contract(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "app/api/platform.py").read_text(encoding="utf-8")
+        self.assertIn("platform.route_denied", source)
+        self.assertIn("append_platform_denial", source)
+        self.assertIn("_PLATFORM_DENIAL_ACTION", source)
+        self.assertNotIn("payload.actor", source)
+        self.assertNotIn("payload.metadata", source)
 
 
 if __name__ == "__main__":

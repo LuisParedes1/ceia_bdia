@@ -266,8 +266,8 @@ def chunk_text(value: str, size: int = 1000, overlap: int = 100) -> list[str]:
 
 
 def _set_context(db: Session, state: dict, tenant: UUID) -> None:
-    db.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(state["user_id"])})
-    db.execute(text("SELECT set_config('app.tenant_id', :value, true)"), {"value": str(tenant)})
+    # pi-lens-ignore: python-sql-injection
+    db.execute(text("SELECT set_config('app.session_proof', :proof, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"proof": state["session_digest"], "user": str(state["user_id"]), "tenant": str(tenant)})
 
 
 def _authorize(db: Session, raw_session: str | None, roles: set[str]) -> tuple[dict, UUID]:

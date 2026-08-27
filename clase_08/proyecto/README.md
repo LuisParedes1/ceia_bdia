@@ -55,7 +55,7 @@ cp .env.example .env
 docker compose config --quiet
 docker compose build
 docker compose up -d db minio minio-init mailpit
-docker compose run --rm api alembic upgrade head
+docker compose --profile admin-tools run --rm admin-tools alembic upgrade head
 docker compose up -d
 docker compose ps
 curl -fsS http://localhost:8000/health
@@ -202,6 +202,50 @@ No forman parte de este MVP:
 
 También se asume desarrollo local, una membresía activa por identidad, Mailpit como correo no entregable y respuestas del asistente basadas sólo en evidencia acotada disponible.
 
+## Administración de plataforma (sólo operador)
+
+La superficie `/api/platform/*` es una aplicación aislada: usa cookies propias (`platform_session_token`, `platform_csrf_token`, distintas de las de tenant), expone únicamente agregados globales de sólo lectura (conteos y estados operativos) y nunca concede acceso a rutas de tenant, contenido, documentos, experimentos ni auditoría de tenant. En el frontend, esa administración vive en una ruta separada, `/platform`, con su propio login/logout y navegación (Resumen, Espacios de trabajo); no comparte sesión, estado ni componentes con la aplicación de tenant.
+
+### Sembrar, rotar o deshabilitar un administrador de plataforma
+
+Igual que las seis identidades de tenant, el administrador de plataforma se declara en `.env` con dos variables propias — **agregalas vos mismo a tu `.env` y a tu `.env.example` local** (no las agrega este repo por vos: son credenciales, y ninguna herramienta automática de este proyecto lee ni escribe `.env*`):
+
+```bash
+PLATFORM_ADMIN_EMAIL=tu-correo-de-plataforma@equipo.edu
+PLATFORM_ADMIN_PASSWORD=una-contraseña-local-de-al-menos-8-caracteres
+```
+
+Usá un correo con un dominio real: `.test`, `.example`, `.invalid` y `.local` son dominios reservados y el backend los rechaza con las mismas reglas que el login. Con esas dos variables en `.env`, el servicio sin puertos `admin-tools` ya las recibe automáticamente (ver `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD` en el bloque `environment` de `admin-tools` en `compose.yaml`), así que **no hace falta pasar `--email` ni construir la contraseña a mano**:
+
+```bash
+# Crear (o confirmar) el administrador declarado en .env — sin argumentos
+docker compose --profile admin-tools run --rm admin-tools python -m app.cli.seed_platform_admin
+
+# Inspeccionar estado sin exponer secretos (ni contraseña ni hash ni tokens)
+docker compose --profile admin-tools run --rm admin-tools python -m app.cli.seed_platform_admin --inspect
+
+# Rotar credencial (incrementa la versión y revoca toda sesión activa); cambiá
+# PLATFORM_ADMIN_PASSWORD en .env antes de correr esto si querés una contraseña nueva
+docker compose --profile admin-tools run --rm admin-tools python -m app.cli.seed_platform_admin --rotate
+
+# Deshabilitar (revoca toda sesión activa y bloquea futuros logins)
+docker compose --profile admin-tools run --rm admin-tools python -m app.cli.seed_platform_admin --disable
+```
+
+`--email` sigue existiendo y tiene prioridad si lo pasás explícitamente (útil para administrar una identidad distinta a la de `.env` sin tocar el archivo). Si preferís no dejar la contraseña en `.env`, podés seguir exportándola sólo en tu shell y pasarla con `-e PLATFORM_ADMIN_PASSWORD`; nunca la pases como argumento de línea de comandos ni la imprimas en logs.
+
+Una ejecución normal sobre una identidad ya sembrada es idempotente: no cambia contraseña ni sesiones activas. Rotar incrementa la versión de credencial y revoca sesiones existentes; deshabilitar revoca sesiones y bloquea login (mismo mensaje genérico que un correo inexistente o contraseña incorrecta). Nunca uses esta herramienta para crear membresías de tenant ni para acceder a contenido de tenant.
+
+> **Nota de seguridad para este ámbito educativo:** guardar `PLATFORM_ADMIN_PASSWORD` en `.env` sigue el mismo patrón que `FIXTURE_PASSWORD` — conveniente para clase, no apto para producción. `.env` ya está fuera de control de versiones (igual que las otras seis credenciales sintéticas); si preferís no persistir la contraseña en disco, usá la alternativa de la fila anterior (exportarla sólo en el shell).
+
+### Verificación operacional
+
+1. Con el stack levantado, entrá a `http://localhost:${WEB_PORT:-5173}/platform` e iniciá sesión con el correo y la contraseña que sembraste. Confirmá que ves únicamente **Resumen** (conteos globales) y **Espacios de trabajo** (listado agregado, buscable y paginado, con detalle por espacio) — nunca documentos, experimentos, personas ni auditoría de un tenant.
+2. Cerrá sesión desde el botón de la interfaz y confirmá que te devuelve al login de plataforma; el logout exige la cookie CSRF de plataforma, igual que el autorevoke de tenant.
+3. Confirmá el aislamiento cruzado: una sesión de tenant (`/login` en la app normal) no puede abrir `/platform` ni llamar `/api/platform/*` (falla con 401/403 genérico); a la inversa, una sesión de plataforma no puede ver ni llamar rutas de tenant (`/api/auth/session`, `/api/experiments`, `/api/documents`, etc.), también con 401/403 genérico.
+4. Las seis identidades de fixture (`alpha`/`beta` × `admin`/`member`/`viewer`) siguen funcionando sin cambios en la app de tenant y ninguna tiene acceso de plataforma.
+5. `python -m unittest discover -s backend/tests -p 'test*.py'` (desde `clase_08/proyecto`) y `npm --prefix frontend run test` cubren estos contratos automáticamente; `./scripts/verify-stack.sh` prueba los contratos vivos que no dependen de la identidad de plataforma (esa identidad se crea aparte, con `admin-tools`, porque `app_runtime` no tiene autoridad de escritura sobre ella por diseño).
+
 ## Operación segura
 
 ### Detener sin borrar datos
@@ -242,7 +286,7 @@ No uses `docker compose down -v`, `docker volume prune` ni `docker system prune`
 3. Para una migración pendiente, repetí el comando idempotente:
 
    ```bash
-   docker compose run --rm api alembic upgrade head
+   docker compose --profile admin-tools run --rm admin-tools alembic upgrade head
    ```
 
 4. Si cambiaste puertos o URLs públicas, corregí `.env` y reconstruí sólo las interfaces:

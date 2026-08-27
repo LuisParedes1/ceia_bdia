@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar, Protocol
 from uuid import UUID
 
 from sqlalchemy import column, select, table, text
@@ -36,12 +36,12 @@ class SqlResult:
 class SqlGuard:
     """Accept only a deliberately small SELECT grammar over curated views."""
 
-    RELATIONS = {
+    RELATIONS: ClassVar = {
         "public.assistant_experiments": {"id", "name", "status", "created_at", "updated_at"},
         "public.assistant_results": {"id", "experiment_id", "status", "input_summary", "output_summary", "created_at"},
         "public.assistant_metrics": {"result_id", "name", "value_type", "number_value", "text_value", "boolean_value", "unit", "step", "recorded_at"},
     }
-    TABLES = {
+    TABLES: ClassVar = {
         relation: table(
             relation.removeprefix("public."),
             *(column(name) for name in columns),
@@ -49,7 +49,7 @@ class SqlGuard:
         )
         for relation, columns in RELATIONS.items()
     }
-    _QUERY = re.compile(
+    _QUERY: ClassVar[re.Pattern[str]] = re.compile(
         r"SELECT\s+(?P<columns>[a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)"
         r"\s+FROM\s+(?P<relation>public\.assistant_[a-z_][a-z0-9_]*)"
         r"(?:\s+ORDER\s+BY\s+(?P<order>[a-z_][a-z0-9_]*)(?:\s+(?P<direction>ASC|DESC))?)?",
@@ -91,6 +91,17 @@ class SqlGuard:
         return canonical, statement.limit(limit)
 
 
+class AssistantProofContext(Protocol):
+    @property
+    def user_id(self) -> UUID: ...
+
+    @property
+    def tenant_id(self) -> UUID: ...
+
+    @property
+    def session_digest(self) -> str: ...
+
+
 class SqlExecutor:
     """Execute guarded SQL with trusted context and hard resource limits."""
 
@@ -102,21 +113,22 @@ class SqlExecutor:
         self,
         query: str,
         *,
-        user_id: UUID,
-        tenant_id: UUID,
-        verifies_membership: Callable[[UUID, UUID], bool],
+        context: AssistantProofContext,
     ) -> SqlResult:
+        # Callers pass the opaque trusted authority as context=context.
         guarded, statement = self._guard.build_select(query, settings.sql_max_rows + 1)
-        if not verifies_membership(user_id, tenant_id):
-            raise PermissionError("trusted active membership is required")
+        if not re.fullmatch(r"[0-9a-f]{64}", context.session_digest):
+            raise PermissionError("trusted session proof is required")
         session = None
         try:
             session = self._session_factory()
             with session.begin():
                 session.execute(text("SET TRANSACTION READ ONLY"))
                 session.execute(text("SELECT set_config('statement_timeout', :timeout, true)"), {"timeout": f"{settings.sql_statement_timeout_ms}ms"})
-                session.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(user_id)})
-                session.execute(text("SELECT set_config('app.tenant_id', :value, true)"), {"value": str(tenant_id)})
+                session.execute(text("SELECT set_config('app.session_proof', :value, true)"), {"value": context.session_digest})
+                session.execute(text("SELECT set_config('app.account_scope', 'tenant', true)"))
+                session.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(context.user_id)})
+                session.execute(text("SELECT set_config('app.tenant_id', :value, true)"), {"value": str(context.tenant_id)})
                 result = session.execute(statement)
                 rows = [dict(row) for row in result.mappings().all()]
                 if len(rows) > settings.sql_max_rows:

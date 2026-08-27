@@ -1,5 +1,8 @@
 """Audit read-model and storage contract checks."""
 
+# pyright: reportArgumentType=false, reportCallIssue=false
+# Pydantic accepts validation aliases dynamically; this test exercises those aliases.
+
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,7 +11,7 @@ from unittest.mock import patch
 
 _ENVIRONMENT = {
     "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-    "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+    "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
     "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
     "MINIO_ACCESS_KEY": "local-user", "MINIO_SECRET_KEY": "local-password",
     "SMTP_FROM": "noreply@example.test", "SESSION_SECRET": "test-session-secret",
@@ -46,7 +49,7 @@ class AuditContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AuditQuery(per_page=30)
         with self.assertRaises(ValueError):
-            AuditQuery(from_at=datetime.now(UTC) - timedelta(days=32), to_at=datetime.now(UTC))
+            AuditQuery(from_at=datetime.now(UTC) - timedelta(days=32), to_at=datetime.now(UTC))  # pyright: ignore[reportCallIssue] -- Pydantic accepts legacy validation aliases at runtime
         for source in ("audit_events", "experiment_status_transitions", "ingestion_runs", "UNION ALL", "ESCAPE"):
             self.assertIn(source, AUDIT_EVENTS_SQL)
 
@@ -54,19 +57,21 @@ class AuditContractTests(unittest.TestCase):
         from app.api.audit import AuditQuery
         from app.repositories.audit import AUDIT_EVENTS_SQL
 
-        date_only = AuditQuery(**{"from": "2026-01-01", "to": "2026-01-31"})
+        # Pyright cannot model Pydantic's runtime alias parsing for from/to.
+        date_only = AuditQuery(**{"from": "2026-01-01", "to": "2026-01-31"})  # pyright: ignore[reportArgumentType]
         self.assertEqual(date_only.from_at, datetime(2026, 1, 1, tzinfo=UTC))
         self.assertEqual(date_only.to_at, datetime(2026, 2, 1, tzinfo=UTC))
         self.assertIn("e.occurred_at < :to_at", AUDIT_EVENTS_SQL)
         self.assertNotIn("e.occurred_at <= :to_at", AUDIT_EVENTS_SQL)
 
-        exact = AuditQuery(**{"from": datetime(2026, 1, 1, 12, tzinfo=UTC), "to": datetime(2026, 1, 1, 13, tzinfo=UTC)})
+        exact = AuditQuery(**{"from": datetime(2026, 1, 1, 12, tzinfo=UTC), "to": datetime(2026, 1, 1, 13, tzinfo=UTC)})  # pyright: ignore[reportCallIssue, reportArgumentType]
         self.assertEqual(exact.to_at, datetime(2026, 1, 1, 13, tzinfo=UTC))
         with self.assertRaises(ValueError):
-            AuditQuery(**{"from": "2026-01-01", "to": "2026-02-01"})
-        AuditQuery(**{"from": "2026-01-01", "to": "2026-01-31"})
+            AuditQuery(**{"from": "2026-01-01", "to": "2026-02-01"})  # pyright: ignore[reportArgumentType]
+        AuditQuery(**{"from": "2026-01-01", "to": "2026-01-31"})  # pyright: ignore[reportArgumentType]
+
         with self.assertRaises(ValueError):
-            AuditQuery(**{"from": datetime(2026, 1, 1, tzinfo=UTC), "to": datetime(2026, 2, 1, 0, 0, 1, tzinfo=UTC)})
+            AuditQuery(**{"from": datetime(2026, 1, 1, tzinfo=UTC), "to": datetime(2026, 2, 1, 0, 0, 1, tzinfo=UTC)})  # pyright: ignore[reportArgumentType]
 
     def test_migration_15_binds_definer_calls_to_request_context_and_restores_revision_14_on_downgrade(self):
         repair = Path("migrations/versions/20260330_15_audit_rls_repair.py").read_text()
@@ -99,7 +104,7 @@ class AuditContractTests(unittest.TestCase):
                     return type("Result", (), {"mappings": lambda self: type("Mappings", (), {"all": lambda self: []})()})()
                 return type("Result", (), {"scalar_one": lambda self: 3})()
 
-        items, total = AuditRepository(Database()).list(  # type: ignore[arg-type]
+        items, total = AuditRepository(Database()).list(  # type: ignore[arg-type, reportCallIssue]
             uuid4(), page=9, per_page=10, from_at=datetime.now(UTC) - timedelta(days=1),
             to_at=datetime.now(UTC), actor_id=None, action=None, outcome=None, search="",
         )

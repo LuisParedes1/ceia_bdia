@@ -9,8 +9,10 @@ from pgvector.sqlalchemy import VECTOR
 from app.core.config import settings
 
 runtime_engine = create_engine(settings.runtime_database_url, pool_pre_ping=True)
-assistant_engine = create_engine(settings.assistant_database_url, pool_pre_ping=True)
+auth_engine = create_engine(settings.auth_database_url, echo=False, hide_parameters=True, pool_pre_ping=True, pool_size=2, max_overflow=0, pool_reset_on_return="rollback")
+assistant_engine = create_engine(settings.assistant_database_url, echo=False, hide_parameters=True, pool_pre_ping=True, pool_size=2, max_overflow=0, pool_reset_on_return="rollback")
 SessionLocal = sessionmaker(bind=runtime_engine, expire_on_commit=False)
+AuthSessionLocal = sessionmaker(bind=auth_engine, expire_on_commit=False)
 AssistantSessionLocal = sessionmaker(bind=assistant_engine, expire_on_commit=False)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func

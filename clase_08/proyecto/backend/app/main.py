@@ -18,6 +18,7 @@ from app.api.auth import router as identity_router
 from app.api.experiments import router as experiments_router
 from app.api.dashboard import router as dashboard_router
 from app.api.audit import router as audit_router
+from app.api.platform import router as platform_router
 from app.documents import router as documents_router
 from app.core.config import settings
 
@@ -48,6 +49,9 @@ _KNOWN_DETAILS = {
     "Document ingestion failed closed.",
     "Embedding provider is unavailable.",
     "El asistente no está disponible para esta consulta.",
+    "Invalid platform credentials.",
+    "Platform authentication required.",
+    "Platform access denied.",
 }
 _STATUS_DETAILS = {
     400: "La solicitud no es válida.",
@@ -104,6 +108,7 @@ app.add_middleware(
     allow_headers=["Accept", "Content-Type", "X-CSRF-Token"],
 )
 app.include_router(identity_router)
+app.include_router(platform_router)
 app.include_router(experiments_router)
 app.include_router(dashboard_router)
 app.include_router(audit_router)

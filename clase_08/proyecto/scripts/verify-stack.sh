@@ -47,7 +47,7 @@ compose run --rm -T --no-deps -e TEST_WEB_ORIGIN="$TEST_WEB_ORIGIN" -v "$PROJECT
 
 say "Proving RLS and pooled transaction-context boundaries"
 compose run --rm -T --no-deps -v "$PROJECT_DIR/backend:/app:ro" api sh -eu -c \
-  'TEST_DATABASE_URL="$RUNTIME_DATABASE_URL" python -m unittest -v tests.test_rls_integration tests.test_tenant_context' ||
+  'TEST_API_URL=http://api:8000 TEST_DATABASE_URL="$RUNTIME_DATABASE_URL" python -m unittest -v tests.test_rls_integration tests.test_tenant_context' ||
   fail "RLS or pooled-context probes failed."
 
 printf '\nStack verification passed without printing credentials or tokens.\n'

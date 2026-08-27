@@ -42,6 +42,7 @@ import { DocumentsPage } from "./documents/DocumentsPage";
 import { AssistantPage } from "./assistant/AssistantPage";
 import { DashboardPage } from "./dashboard/DashboardPage";
 import { AuditPage } from "./audit/AuditPage";
+import { PlatformApp } from "./platform/PlatformApp";
 
 type Auth = {
   session: Session | null;
@@ -484,6 +485,7 @@ function DocumentsRoute() {
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/platform/*" element={<PlatformApp />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/recovery" element={<AuthPage mode="request" />} />

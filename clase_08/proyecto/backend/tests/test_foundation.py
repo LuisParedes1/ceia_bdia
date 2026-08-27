@@ -9,7 +9,7 @@ class BackendFoundationTests(unittest.TestCase):
             "os.environ",
             {
                 "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-                "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+                "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
                 "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
                 "MINIO_ACCESS_KEY": "local-user",
                 "MINIO_SECRET_KEY": "local-password",
@@ -71,16 +71,16 @@ class BackendFoundationTests(unittest.TestCase):
         self.assertEqual(json.loads(bytes(internal.body)), {"detail": "Ocurrió un error interno. Intentá nuevamente más tarde."})
         self.assertNotIn("database password", bytes(internal.body).decode())
 
-    def test_settings_allow_local_foundation_values(self) -> None:
+    def test_runtime_and_admin_settings_have_separate_database_boundaries(self) -> None:
         # Ignore both the process environment and configured dotenv source so
         # host credentials cannot affect this local-defaults contract.
         with patch.dict("os.environ", {}, clear=True):
-            from app.core.config import Settings
+            from app.core.config import AdminToolSettings, RuntimeSettings
 
-            settings = Settings(  # pyright: ignore[reportCallIssue] -- pydantic-settings runtime-only source control
+            settings = RuntimeSettings(  # pyright: ignore[reportCallIssue] -- pydantic-settings runtime-only source control
                 _env_file=None,  # pyright: ignore[reportCallIssue] -- pydantic-settings runtime-only source control
                 runtime_database_url="postgresql+psycopg://runtime:password@db/student_project",
-                migrator_database_url="postgresql+psycopg://migrator:password@db/student_project",
+                auth_database_url="postgresql+psycopg://auth:password@db/student_project",
                 assistant_database_url="postgresql+psycopg://assistant:password@db/student_project",
                 minio_access_key="local-user",
                 minio_secret_key="local-password",
@@ -88,12 +88,18 @@ class BackendFoundationTests(unittest.TestCase):
                 session_secret="test-session-secret",
                 recovery_token_secret="test-recovery-secret",
             )
+            admin = AdminToolSettings(  # pyright: ignore[reportCallIssue] -- pydantic-settings runtime-only source control
+                _env_file=None,  # pyright: ignore[reportCallIssue] -- pydantic-settings runtime-only source control
+                migrator_database_url="postgresql+psycopg://migrator:password@db/student_project",
+            )
 
         self.assertEqual(settings.max_upload_bytes, 25 * 1024 * 1024)
         self.assertEqual(settings.embedding_dimension, 384)
         self.assertEqual(settings.embeddings_api_url, "http://embeddings-api:8000")
         self.assertTrue(settings.openrouter_api_key is None)
         self.assertEqual(settings.openrouter_model, "openai/gpt-4o-mini")
+        self.assertFalse(hasattr(settings, "migrator_database_url"))
+        self.assertFalse(hasattr(admin, "runtime_database_url"))
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ def _trusted(db: Session, state: dict, roles: set[str]) -> UUID:
 
 def _set_context(db: Session, state: dict, tenant: UUID) -> None:
     # pi-lens-ignore: python-sql-injection
-    db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"user": str(state["user_id"]), "tenant": str(tenant)})
+    db.execute(text("SELECT set_config('app.session_proof', :proof, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"proof": state["session_digest"], "user": str(state["user_id"]), "tenant": str(tenant)})
 
 
 def _mutation(request: Request, db: Session, state: dict, csrf_header: str | None, csrf_cookie: str | None) -> UUID:

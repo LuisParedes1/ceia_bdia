@@ -72,8 +72,11 @@ def upgrade() -> None:
     """)
     for table in TENANT_TABLES:
         tenant_column = "id" if table == "tenants" else "tenant_id"
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- table comes from TENANT_TABLES
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- table comes from TENANT_TABLES
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- identifiers come from TENANT_TABLES
         op.execute(f"""
             CREATE POLICY {table}_tenant_isolation ON {table}
             USING (
@@ -85,15 +88,19 @@ def upgrade() -> None:
                 AND NULLIF(current_setting('app.user_id', true), '') IS NOT NULL
             )
         """)
-    op.execute("RESET ROLE")
     op.execute("GRANT USAGE ON SCHEMA public TO app_runtime, assistant_reader")
-    op.execute("GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO app_runtime")
+    op.execute(
+        "GRANT SELECT, INSERT, UPDATE ON users, tenants, memberships, roles, permissions, "
+        "role_permissions, experiments, results, metrics, documents, chunks, embeddings TO app_runtime"
+    )
     op.execute("GRANT SELECT ON experiments, results, metrics, documents, chunks, embeddings TO assistant_reader")
+    op.execute("RESET ROLE")
 
 
 def downgrade() -> None:
     op.execute("SET ROLE project_owner")
     for table in reversed(TENANT_TABLES):
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- table comes from TENANT_TABLES
         op.execute(f"DROP TABLE {table}")
     op.execute("DROP TABLE permissions")
     op.execute("DROP TABLE users")

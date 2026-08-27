@@ -1,42 +1,65 @@
 # pyright: reportMissingImports=false
 
+import hashlib
+import hmac
+import json
 import os
+import re
 import unittest
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
+from urllib.request import Request, urlopen
 
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
+BASE_URL = os.getenv("TEST_API_URL", "")
 
 
-@unittest.skipUnless(DATABASE_URL, "set TEST_DATABASE_URL to run PostgreSQL RLS probes")
+@unittest.skipUnless(DATABASE_URL and BASE_URL, "set TEST_DATABASE_URL and TEST_API_URL to run PostgreSQL RLS probes")
 class RlsIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def _register(label: str) -> tuple[UUID, UUID, str]:
+        request = Request(
+            f"{BASE_URL}/api/auth/register",
+            data=json.dumps({"email": f"rls-{label}-{uuid4()}@example.com", "password": "correct-horse", "tenant_name": f"RLS {label}"}).encode(),
+            headers={"Host": "api", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read())
+            cookies = ", ".join(response.headers.get_all("Set-Cookie", []))
+        match = re.search(r"session_token=([^;]+)", cookies)
+        if match is None:
+            raise AssertionError("registration did not issue a session")
+        return UUID(payload["user_id"]), UUID(payload["tenant_id"]), match.group(1)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.engine = create_engine(DATABASE_URL, pool_size=1, max_overflow=0)
-        cls.user_a, cls.user_b, cls.tenant_a, cls.tenant_b = uuid4(), uuid4(), uuid4(), uuid4()
-        with cls.engine.begin() as connection:
-            for user_id in (cls.user_a, cls.user_b):
-                connection.execute(
-                    text("INSERT INTO users (id, email, password_hash) VALUES (:id, :email, 'x')"),
-                    {"id": user_id, "email": f"fixture-{user_id}@example.test"},
-                )
-            for user_id, tenant_id, name in ((cls.user_a, cls.tenant_a, "tenant-a"), (cls.user_b, cls.tenant_b, "tenant-b")):
-                cls._context(connection, user_id, tenant_id)
-                connection.execute(text("INSERT INTO tenants (id, name) VALUES (:id, :name)"), {"id": tenant_id, "name": name})
-                connection.execute(text("INSERT INTO memberships (tenant_id, user_id) VALUES (:tenant, :user)"), {"tenant": tenant_id, "user": user_id})
+        cls.user_a, cls.tenant_a, session_a = cls._register("a")
+        cls.user_b, cls.tenant_b, session_b = cls._register("b")
+        cls.sessions = {cls.user_a: session_a, cls.user_b: session_b}
 
-    @staticmethod
-    def _context(connection, user_id, tenant_id) -> None:
-        connection.execute(text("SELECT set_config('app.user_id', :value, true)"), {"value": str(user_id)})
-        connection.execute(text("SELECT set_config('app.tenant_id', :value, true)"), {"value": str(tenant_id)})
+    @classmethod
+    def _context(cls, connection, user_id, tenant_id) -> None:
+        digest = hmac.new(os.environ["SESSION_SECRET"].encode(), cls.sessions[user_id].encode(), hashlib.sha256).hexdigest()
+        connection.execute(
+            text("SELECT set_config('app.session_proof', :proof, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"),
+            {"proof": digest, "user": str(user_id), "tenant": str(tenant_id)},
+        )
 
     def test_missing_and_cross_tenant_context_leave_victim_unchanged(self) -> None:
         with self.engine.connect() as connection:
             with connection.begin():
+                self.assertEqual(connection.execute(text("SELECT count(*) FROM tenants")).scalar_one(), 0)
+            with connection.begin():
+                connection.execute(
+                text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"),
+                {"user": str(self.user_a), "tenant": str(self.tenant_a)},
+                )
                 self.assertEqual(connection.execute(text("SELECT count(*) FROM tenants")).scalar_one(), 0)
             with connection.begin():
                 self._context(connection, self.user_a, self.tenant_a)
@@ -51,7 +74,7 @@ class RlsIntegrationTests(unittest.TestCase):
             self._context(connection, self.user_b, self.tenant_b)
             self.assertEqual(
                 connection.execute(text("SELECT name FROM tenants WHERE id = :id"), {"id": self.tenant_b}).scalar_one(),
-                "tenant-b",
+                "RLS b",
             )
 
     def test_experiment_status_history_is_tenant_isolated_and_append_only(self) -> None:
@@ -108,7 +131,7 @@ class RlsIntegrationTests(unittest.TestCase):
             self._context(connection, self.user_a, self.tenant_a)
             event_id = connection.execute(text("SELECT append_audit_event(:actor,:tenant,'auth.login','success','session',CAST(:metadata AS jsonb))"), {"actor": self.user_a, "tenant": self.tenant_a, "metadata": "{}"}).scalar_one()
             self.assertIsNotNone(event_id)
-            self.assertEqual(connection.execute(text("SELECT count(*) FROM audit_events WHERE id=:id"), {"id": event_id}).scalar_one(), 0)
+            self.assertEqual(connection.execute(text("SELECT count(*) FROM audit_events WHERE id=:id"), {"id": event_id}).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT recovery_request_count(:resource)"), {"resource": resource}).scalar_one(), 0)
             connection.execute(text("SELECT append_audit_event(NULL,NULL,'auth.recovery.request','success',:resource,CAST(:metadata AS jsonb))"), {"resource": resource, "metadata": "{}"})
             self.assertEqual(connection.execute(text("SELECT recovery_request_count(:resource)"), {"resource": resource}).scalar_one(), 1)

@@ -36,5 +36,5 @@ def get_dashboard(
     tenant = _tenant_context(db, state, {"admin", "member", "viewer"})
     with db.begin():
         # pi-lens-ignore: python-sql-injection
-        db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"user": str(state["user_id"]), "tenant": str(tenant)})
+        db.execute(text("SELECT set_config('app.session_proof', :proof, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"), {"proof": state["session_digest"], "user": str(state["user_id"]), "tenant": str(tenant)})
         return DashboardRepository(db).overview(tenant, query.from_date, query.to_date, query.search, query.status, query.sort, query.page, query.per_page)

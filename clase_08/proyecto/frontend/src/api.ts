@@ -499,3 +499,118 @@ export const queryAssistant = (prompt: string, mode: AssistantMode) =>
     method: "POST",
     body: JSON.stringify({ prompt, mode }),
   });
+
+// --- Platform administration (isolated session/cookie surface) ---
+
+const platformCsrf = () =>
+  document.cookie
+    .split("; ")
+    .find((part) => part.startsWith("platform_csrf_token="))
+    ?.split("=")[1];
+
+async function platformRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const method = init.method ?? "GET";
+  const headers: Record<string, string> = {};
+  new Headers(init.headers).forEach((value, key) => {
+    headers[key] = value;
+  });
+  if (init.body) headers["content-type"] = "application/json";
+  if (method !== "GET") headers["x-csrf-token"] = platformCsrf() ?? "";
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      credentials: "include",
+      headers,
+    });
+  } catch {
+    throw new Error("La API no está disponible.");
+  }
+
+  if (!response.ok) {
+    const fallback = statusMessage(response.status);
+    let detail: unknown;
+    try {
+      detail = ((await response.json()) as { detail?: unknown }).detail;
+    } catch {
+      // Non-JSON error responses use only the trusted status fallback.
+    }
+    throw new Error(apiErrorMessage(detail, fallback));
+  }
+  return response.json() as Promise<T>;
+}
+
+export const platformLogin = (email: string, password: string) =>
+  platformRequest<{ authenticated: boolean }>("/platform/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+export const platformLogout = () =>
+  platformRequest<{ logged_out: boolean }>("/platform/logout", {
+    method: "POST",
+  });
+
+export type PlatformSummary = {
+  tenant_count: number;
+  active_tenant_count: number;
+  platform_admin_count: number;
+  active_platform_admin_count: number;
+  experiment_count: number;
+  document_count: number;
+};
+export const getPlatformSummary = () =>
+  platformRequest<PlatformSummary>("/platform/summary");
+
+export type PlatformTenantOverviewItem = {
+  tenant_id: string;
+  tenant_name: string;
+  created_at: string;
+  active_member_count: number;
+  experiment_count: number;
+  document_count: number;
+  last_activity_at: string | null;
+};
+export type PlatformTenantOverviewResponse = {
+  items: PlatformTenantOverviewItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+export type PlatformTenantOverviewQuery = {
+  search: string;
+  limit: number;
+  offset: number;
+};
+export const getPlatformTenantOverview = (
+  query: PlatformTenantOverviewQuery,
+) => {
+  const params = new URLSearchParams({
+    search: query.search,
+    limit: String(query.limit),
+    offset: String(query.offset),
+  });
+  return platformRequest<PlatformTenantOverviewResponse>(
+    `/platform/tenant-overview?${params.toString()}`,
+  );
+};
+
+export type PlatformTenantDetail = {
+  tenant_id: string;
+  tenant_name: string;
+  created_at: string;
+  active_member_count: number;
+  experiment_draft_count: number;
+  experiment_running_count: number;
+  experiment_completed_count: number;
+  experiment_failed_count: number;
+  document_count: number;
+  last_activity_at: string | null;
+};
+export const getPlatformTenantDetail = (tenantId: string) =>
+  platformRequest<PlatformTenantDetail>(
+    `/platform/tenant-overview/${encodeURIComponent(tenantId)}`,
+  );

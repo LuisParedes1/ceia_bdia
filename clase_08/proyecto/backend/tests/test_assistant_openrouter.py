@@ -9,7 +9,7 @@ import requests
 
 os.environ.update({
     "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-    "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+    "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
     "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
     "MINIO_ACCESS_KEY": "local-user", "MINIO_SECRET_KEY": "local-password",
     "SMTP_FROM": "noreply@example.test", "SESSION_SECRET": "test-session-secret",

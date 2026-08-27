@@ -4,29 +4,36 @@
 from __future__ import annotations
 
 import os
+import math
 import sys
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from typing import Callable, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from minio import Minio  # pyright: ignore[reportMissingImports] -- provided by the API runtime
-from sqlalchemy import create_engine, text  # pyright: ignore[reportMissingImports] -- provided by the API runtime
-from sqlalchemy.dialects.postgresql import insert as pg_insert  # pyright: ignore[reportMissingImports] -- provided by the API runtime
+from sqlalchemy import Column, MetaData, String, Table, create_engine, text  # pyright: ignore[reportMissingImports] -- provided by the API runtime
+from sqlalchemy.dialects.postgresql import UUID, insert as pg_insert  # pyright: ignore[reportMissingImports] -- provided by the API runtime
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR / "backend"))
 
-from app.core.config import settings  # noqa: E402  # pyright: ignore[reportMissingImports] -- backend path inserted above
-from app.core.database import users as users_table  # noqa: E402  # pyright: ignore[reportMissingImports] -- backend path inserted above
-from app.documents import FixedEmbeddingProvider  # pyright: ignore[reportMissingImports] -- backend path inserted above
+from app.core.config import AdminToolSettings  # noqa: E402  # pyright: ignore[reportMissingImports] -- backend path inserted above
+  # pyright: ignore[reportMissingImports] -- backend path inserted above
 from app.security.password import hash_password  # pyright: ignore[reportMissingImports] -- backend path inserted above
 
 PREFIX = "https://example.test/gentle-ai/demo/"
 ROLES = ("admin", "member", "viewer")
 TENANTS = (("alpha", "Alpha Research Lab"), ("beta", "Beta Evaluation Lab"))
 DASHBOARD_DAYS = 91
+users_table = Table(
+    "users", MetaData(),
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("email", String(320)),
+    Column("password_hash", String(255)),
+)
 FIXTURE_EMAIL_VARIABLES = {
     "alpha": {
         "admin": "ALPHA_ADMIN_EMAIL",
@@ -86,6 +93,27 @@ def fixture_id(value: str) -> UUID:
     return uuid5(NAMESPACE_URL, PREFIX + value)
 
 
+class FixedEmbeddingProvider:
+    """Deterministic normalized fixture provider; no request context crosses this seam."""
+
+    def __init__(self, dimension: int, adapter: Callable[[str], list[float]] | None = None):
+        self.dimension, self.adapter = dimension, adapter or self._local
+
+    def _local(self, value: str) -> list[float]:
+        raw = [(sha256(f"{index}:{value}".encode()).digest()[0] / 127.5) - 1.0 for index in range(self.dimension)]
+        norm = sum(item * item for item in raw) ** 0.5
+        return [item / norm for item in raw]
+
+    def embed(self, value: str, intent: Literal["query", "passage"] = "query") -> list[float]:
+        try:
+            vector = self.adapter(value)
+        except Exception as exc:
+            raise RuntimeError("embedding provider unavailable") from exc
+        if len(vector) != self.dimension or any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) for item in vector):
+            raise RuntimeError("embedding provider returned a malformed vector")
+        return [float(item) for item in vector]
+
+
 def seed_fixture_chunk_and_embedding(
     connection,
     tenant_id: UUID,
@@ -124,7 +152,8 @@ def seed_fixture_chunk_and_embedding(
 def seed() -> None:
     fixture_emails, password = load_fixture_credentials()
     objects: list[tuple[str, bytes]] = []
-    engine = create_engine(settings.migrator_database_url)
+    admin_settings = AdminToolSettings()
+    engine = create_engine(admin_settings.migrator_database_url)
     embedder = FixedEmbeddingProvider(384)
     with engine.connect() as connection:
         for slug, tenant_name in TENANTS:
@@ -160,13 +189,20 @@ def seed() -> None:
                             },
                         )
                     )
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("INSERT INTO tenants(id,name) VALUES (:id,:name) ON CONFLICT DO NOTHING"), {"id": tenant_id, "name": tenant_name})
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("INSERT INTO permissions(code) VALUES ('members:manage') ON CONFLICT DO NOTHING"))
                 for role, user_id in users.items():
+                    # pi-lens-ignore: python-sql-injection
                     connection.execute(text("INSERT INTO memberships(tenant_id,user_id) VALUES (:tenant,:user) ON CONFLICT DO NOTHING"), {"tenant": tenant_id, "user": user_id})
+                    # pi-lens-ignore: python-sql-injection
                     connection.execute(text("INSERT INTO roles(id,tenant_id,name) VALUES (:id,:tenant,:name) ON CONFLICT DO NOTHING"), {"id": roles[role], "tenant": tenant_id, "name": role})
+                    # pi-lens-ignore: python-sql-injection
                     connection.execute(text("INSERT INTO membership_roles(tenant_id,user_id,role_id) VALUES (:tenant,:user,:role) ON CONFLICT DO NOTHING"), {"tenant": tenant_id, "user": user_id, "role": roles[role]})
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES (:tenant,:role,'members:manage') ON CONFLICT DO NOTHING"), {"tenant": tenant_id, "role": roles["admin"]})
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("INSERT INTO experiments(id,tenant_id,creator_id,name,status) VALUES (:id,:tenant,:user,:name,'completed') ON CONFLICT DO NOTHING"), {"id": experiment_id, "tenant": tenant_id, "user": users["admin"], "name": f"{tenant_name} baseline"})
                 for day in range(DASHBOARD_DAYS):
                     created_at = datetime.now(UTC) - timedelta(days=day)
@@ -174,14 +210,18 @@ def seed() -> None:
                     dashboard_result = fixture_id(f"tenant/{slug}/dashboard/result/{day}")
                     dashboard_metric = fixture_id(f"tenant/{slug}/dashboard/metric/{day}")
                     experiment_status = ("completed", "running", "failed", "draft")[day % 4]
+                    # pi-lens-ignore: python-sql-injection
                     connection.execute(text("""INSERT INTO experiments(id,tenant_id,creator_id,name,status,created_at,updated_at)
                         VALUES (:id,:tenant,:user,:name,:status,:created,:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_experiment, "tenant": tenant_id, "user": users["admin"], "name": f"{tenant_name} dashboard {day + 1:03d}", "status": experiment_status, "created": created_at})
                     if experiment_status != "draft":
                         result_status = "failed" if experiment_status == "failed" else "completed"
+                        # pi-lens-ignore: python-sql-injection
                         connection.execute(text("""INSERT INTO results(id,tenant_id,experiment_id,creator_id,status,input_summary,output_summary,created_at)
                             VALUES (:id,:tenant,:experiment,:user,:status,'dashboard input','dashboard output',:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_result, "tenant": tenant_id, "experiment": dashboard_experiment, "user": users["member"], "status": result_status, "created": created_at})
+                        # pi-lens-ignore: python-sql-injection
                         connection.execute(text("""INSERT INTO metrics(id,tenant_id,result_id,creator_id,name,value_type,number_value,step,recorded_at)
                             VALUES (:id,:tenant,:result,:user,'dashboard_score','number',:value,:step,:created) ON CONFLICT DO NOTHING"""), {"id": dashboard_metric, "tenant": tenant_id, "result": dashboard_result, "user": users["member"], "value": round(0.5 + day / 200, 3), "step": day, "created": created_at})
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("INSERT INTO results(id,tenant_id,experiment_id,creator_id,status,input_summary,output_summary) VALUES (:id,:tenant,:experiment,:user,'completed','deterministic input','deterministic output') ON CONFLICT DO NOTHING"), {"id": result_id, "tenant": tenant_id, "experiment": experiment_id, "user": users["member"]})
                 metric_values = (
                     ("number", {"number": 0.91}), ("text", {"text_value": "accepted"}),
@@ -191,8 +231,10 @@ def seed() -> None:
                     params = {"id": fixture_id(f"tenant/{slug}/metric/{kind}"), "tenant": tenant_id, "result": result_id,
                               "user": users["member"], "name": f"fixture_{kind}", "kind": kind,
                               "number": None, "text_value": None, "boolean": None, "json_value": None} | value
+                    # pi-lens-ignore: python-sql-injection
                     connection.execute(text("""INSERT INTO metrics(id,tenant_id,result_id,creator_id,name,value_type,number_value,text_value,boolean_value,json_value,step)
                         VALUES (:id,:tenant,:result,:user,:name,:kind,:number,:text_value,:boolean,CAST(:json_value AS jsonb),:step) ON CONFLICT DO NOTHING"""), params | {"step": index})
+                # pi-lens-ignore: python-sql-injection
                 connection.execute(text("""INSERT INTO documents(id,tenant_id,created_by,name,object_key,ingestion_status,content_type,size_bytes,sha256)
                     VALUES (:id,:tenant,:user,'demo-security-fixture.txt',:key,'ready','text/plain',:size,:digest) ON CONFLICT DO NOTHING"""),
                     {"id": document_id, "tenant": tenant_id, "user": users["member"], "key": object_key, "size": len(data), "digest": sha256(data).hexdigest()})
@@ -206,9 +248,9 @@ def seed() -> None:
                     embedding=str(embedder.embed(content, "passage")),
                 )
 
-    client = Minio(settings.minio_endpoint, settings.minio_access_key, settings.minio_secret_key, secure=False)
+    client = Minio(os.environ["MINIO_ENDPOINT"], os.environ["MINIO_ACCESS_KEY"], os.environ["MINIO_SECRET_KEY"], secure=False)
     for object_key, data in objects:
-        client.put_object(settings.minio_bucket, object_key, BytesIO(data), len(data), content_type="text/plain")
+        client.put_object(os.environ.get("MINIO_BUCKET", "student-assets"), object_key, BytesIO(data), len(data), content_type="text/plain")
     print("Seeded 2 tenants, 6 identities, and isolated relational/vector/object fixtures.")
 
 

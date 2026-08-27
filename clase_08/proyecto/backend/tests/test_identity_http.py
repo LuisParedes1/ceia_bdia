@@ -2,6 +2,8 @@
 
 # pyright: reportMissingImports=false
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -45,6 +47,15 @@ class IdentityHttpTests(unittest.TestCase):
 
     def csrf_headers(self, session: str, csrf: str) -> dict[str, str]:
         return {"Origin": WEB_ORIGIN, "Cookie": f"session_token={session}; csrf_token={csrf}", "X-CSRF-Token": csrf}
+
+    @staticmethod
+    def bind_runtime_proof(cursor: psycopg.Cursor, session: str, identity: dict) -> None:
+        """Bind the same active HTTP session proof before app_runtime inspection."""
+        digest = hmac.new(os.environ["SESSION_SECRET"].encode(), session.encode(), hashlib.sha256).hexdigest()
+        cursor.execute(
+            "SELECT set_config('app.session_proof', %s, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)",
+            (digest, identity["user_id"], identity["tenant_id"]),
+        )
 
     def upload_text_document(self, name: str, content: str, headers: dict[str, str]) -> tuple[int, dict]:
         boundary = f"----documents-{uuid4().hex}"
@@ -184,8 +195,7 @@ class IdentityHttpTests(unittest.TestCase):
         database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.user_id', %s, true)", (owner["user_id"],))
-                cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (owner["tenant_id"],))
+                self.bind_runtime_proof(cursor, session, owner)
                 cursor.execute("SELECT count(*), bool_and(active) FROM chunks WHERE tenant_id=%s AND document_id=%s", (owner["tenant_id"], document_id))
                 self.assertEqual(cursor.fetchone(), (1, True))
                 cursor.execute("SELECT count(*) FROM embeddings WHERE tenant_id=%s AND chunk_id IN (SELECT id FROM chunks WHERE tenant_id=%s AND document_id=%s)", (owner["tenant_id"], owner["tenant_id"], document_id))
@@ -300,7 +310,7 @@ class IdentityHttpTests(unittest.TestCase):
         database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)", (owner["user_id"], owner["tenant_id"]))
+                self.bind_runtime_proof(cursor, session, owner)
                 cursor.execute("SELECT action, metadata FROM audit_events WHERE tenant_id=%s AND resource=%s AND action IN ('experiment.archived', 'experiment.restored') ORDER BY created_at", (owner["tenant_id"], f"experiment:{experiment_id}"))
                 audit_rows = cursor.fetchall()
         self.assertEqual(audit_rows, [("experiment.archived", {"archived": True, "previous_archived": False}), ("experiment.restored", {"archived": False, "previous_archived": True})])
@@ -540,13 +550,13 @@ class IdentityHttpTests(unittest.TestCase):
         database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.user_id', %s, true), set_config('app.tenant_id', %s, true)", (owner["user_id"], owner["tenant_id"]))
+                self.bind_runtime_proof(cursor, owner_session, owner)
                 cursor.execute(
-                        "SELECT action, outcome, resource, metadata FROM audit_events "
-                        "WHERE tenant_id=%s AND actor_id=%s AND resource=%s "
-                        "AND action LIKE 'membership.%%' ORDER BY created_at, id",
-                        (owner["tenant_id"], owner["user_id"], f"membership:{membership_id}"),
-                    )
+                    "SELECT action, outcome, resource, metadata FROM audit_events "
+                    "WHERE tenant_id=%s AND actor_id=%s AND resource=%s "
+                    "AND action LIKE 'membership.%%' ORDER BY created_at, id",
+                    (owner["tenant_id"], owner["user_id"], f"membership:{membership_id}"),
+                )
                 audit_rows = cursor.fetchall()
         self.assertCountEqual(
             audit_rows,

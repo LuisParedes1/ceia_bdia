@@ -11,6 +11,11 @@ class FixtureDashboardTests(unittest.TestCase):
         self.assertIn("timedelta", source)
         self.assertIn("tenant/{slug}/dashboard/experiment", source)
         self.assertNotIn("print(password)", source)
+        self.assertIn("AdminToolSettings", source)
+        self.assertIn("class FixedEmbeddingProvider", source)
+        self.assertIn("insert as pg_insert", source)
+        self.assertIn("embedder.embed(content, \"passage\")", source)
+        self.assertNotIn("FIXTURE_EMBEDDING", source)
 
 
 if __name__ == "__main__":

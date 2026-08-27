@@ -32,7 +32,7 @@ def query_assistant(payload: AssistantRequest, session_token: Annotated[str | No
     db.commit()
     tenant = _tenant_context(db, state, {"admin", "member", "viewer"})
     # Authorization above proves an allowed role; use the least-privileged effective role downstream.
-    context = TrustedAssistantContext(state["user_id"], tenant, "viewer")
+    context = TrustedAssistantContext(state["user_id"], tenant, "viewer", state["session_digest"])
     try:
         return _service(db).answer(payload.prompt, payload.mode, context)
     except PermissionError as exc:

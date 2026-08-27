@@ -17,6 +17,7 @@ import {
   register,
   type Session,
   apiErrorMessage,
+  getPlatformSummary,
 } from "./api";
 
 vi.mock("./api", async (importOriginal) => ({
@@ -31,6 +32,7 @@ vi.mock("./api", async (importOriginal) => ({
   getMembers: vi.fn(),
   updateMember: vi.fn(),
   getAuditEvents: vi.fn(),
+  getPlatformSummary: vi.fn(),
 }));
 afterEach(() => {
   cleanup();
@@ -861,5 +863,37 @@ describe("auth field-local validation", () => {
     expect(
       screen.queryByText("Ingresá tu contraseña."),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("platform route separation", () => {
+  it("routes /platform to the isolated platform surface instead of the tenant app", async () => {
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    vi.mocked(getPlatformSummary).mockRejectedValueOnce(
+      new Error("Platform access denied."),
+    );
+    renderAt("/platform/summary");
+    expect(
+      await screen.findByText(/administración de plataforma/i),
+    ).toBeInTheDocument();
+    // Tenant chrome (workspace name/nav) never renders on the isolated platform route.
+    expect(screen.queryByText(/espacio de trabajo/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Experimentos" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not let a tenant session grant access to the platform surface", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getPlatformSummary).mockRejectedValueOnce(
+      new Error("Platform access denied."),
+    );
+    renderAt("/platform/summary");
+    expect(
+      await screen.findByRole("heading", { name: "Ingresar" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/acceso exclusivo para administradores de plataforma/i),
+    ).toBeInTheDocument();
   });
 });

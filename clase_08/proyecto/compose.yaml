@@ -61,9 +61,10 @@ services:
       BETA_MEMBER_EMAIL: ${BETA_MEMBER_EMAIL}
       BETA_VIEWER_EMAIL: ${BETA_VIEWER_EMAIL}
       FIXTURE_PASSWORD: ${FIXTURE_PASSWORD}
-      RUNTIME_DATABASE_URL: postgresql+psycopg://app_runtime:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
-      MIGRATOR_DATABASE_URL: postgresql+psycopg://project_migrator:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
-      ASSISTANT_DATABASE_URL: postgresql+psycopg://assistant_reader:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
+      RUNTIME_DATABASE_URL: "postgresql+psycopg://app_runtime:${APP_RUNTIME_PASSWORD:?set APP_RUNTIME_PASSWORD}@db:5432/student_project"
+      AUTH_DATABASE_URL: "postgresql+psycopg://auth_runtime:${AUTH_RUNTIME_PASSWORD:?set AUTH_RUNTIME_PASSWORD}@db:5432/student_project"
+      ASSISTANT_DATABASE_URL: "postgresql+psycopg://assistant_reader:${ASSISTANT_READER_PASSWORD:?set ASSISTANT_READER_PASSWORD}@db:5432/student_project"
+
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-change-me-before-use}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-before-use}
@@ -104,17 +105,81 @@ services:
     environment:
       POSTGRES_DB: student_project
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-before-use}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+      PROJECT_MIGRATOR_PASSWORD: "${PROJECT_MIGRATOR_PASSWORD:?set PROJECT_MIGRATOR_PASSWORD}"
+      APP_RUNTIME_PASSWORD: "${APP_RUNTIME_PASSWORD:?set APP_RUNTIME_PASSWORD}"
+      AUTH_RUNTIME_PASSWORD: "${AUTH_RUNTIME_PASSWORD:?set AUTH_RUNTIME_PASSWORD}"
+      ASSISTANT_READER_PASSWORD: "${ASSISTANT_READER_PASSWORD:?set ASSISTANT_READER_PASSWORD}"
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - student-project-postgres:/var/lib/postgresql/data
       - ./infra/postgres/00-create-roles.sh:/docker-entrypoint-initdb.d/00-create-roles.sh:ro
+      - ./infra/postgres/01-ensure-platform-roles.sql:/opt/project/01-ensure-platform-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U project_migrator -d student_project"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  admin-tools:
+    build: ./backend
+    profiles: ["admin-tools"]
+    restart: "no"
+    environment:
+      MIGRATOR_DATABASE_URL: "postgresql+psycopg://project_migrator:${PROJECT_MIGRATOR_PASSWORD:?set PROJECT_MIGRATOR_PASSWORD}@db:5432/student_project"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-change-me-before-use}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-before-use}
+      MINIO_BUCKET: student-assets
+      ALPHA_ADMIN_EMAIL: ${ALPHA_ADMIN_EMAIL}
+      ALPHA_MEMBER_EMAIL: ${ALPHA_MEMBER_EMAIL}
+      ALPHA_VIEWER_EMAIL: ${ALPHA_VIEWER_EMAIL}
+      BETA_ADMIN_EMAIL: ${BETA_ADMIN_EMAIL}
+      BETA_MEMBER_EMAIL: ${BETA_MEMBER_EMAIL}
+      BETA_VIEWER_EMAIL: ${BETA_VIEWER_EMAIL}
+      FIXTURE_PASSWORD: ${FIXTURE_PASSWORD}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-}
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  db-role-reconcile:
+    image: pgvector/pgvector:pg16
+    profiles: ["db-role-reconcile"]
+    restart: "no"
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+      PROJECT_MIGRATOR_PASSWORD: "${PROJECT_MIGRATOR_PASSWORD:?set PROJECT_MIGRATOR_PASSWORD}"
+      APP_RUNTIME_PASSWORD: "${APP_RUNTIME_PASSWORD:?set APP_RUNTIME_PASSWORD}"
+      AUTH_RUNTIME_PASSWORD: "${AUTH_RUNTIME_PASSWORD:?set AUTH_RUNTIME_PASSWORD}"
+      ASSISTANT_READER_PASSWORD: "${ASSISTANT_READER_PASSWORD:?set ASSISTANT_READER_PASSWORD}"
+    volumes:
+      - ./infra/postgres/01-ensure-platform-roles.sql:/opt/project/01-ensure-platform-roles.sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - |
+        for required in POSTGRES_PASSWORD PROJECT_MIGRATOR_PASSWORD APP_RUNTIME_PASSWORD AUTH_RUNTIME_PASSWORD ASSISTANT_READER_PASSWORD; do
+          eval "value=\$${$$required-}"
+          test -n "$$value" || { echo "credential contract rejected" >&2; exit 1; }
+        done
+        for left in POSTGRES_PASSWORD PROJECT_MIGRATOR_PASSWORD APP_RUNTIME_PASSWORD AUTH_RUNTIME_PASSWORD ASSISTANT_READER_PASSWORD; do
+          eval "left_value=\$${$$left}"
+          for right in POSTGRES_PASSWORD PROJECT_MIGRATOR_PASSWORD APP_RUNTIME_PASSWORD AUTH_RUNTIME_PASSWORD ASSISTANT_READER_PASSWORD; do
+            test "$$left" = "$$right" && continue
+            eval "right_value=\$${$$right}"
+            test "$$left_value" != "$$right_value" || { echo "credential contract rejected" >&2; exit 1; }
+          done
+        done
+        PGPASSWORD="$${POSTGRES_PASSWORD}" psql --host=db --username=postgres --dbname=student_project --file=/opt/project/01-ensure-platform-roles.sql
 
   pgadmin:
     container_name: pgadmin

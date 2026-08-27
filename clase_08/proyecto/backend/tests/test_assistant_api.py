@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 os.environ.update({
     "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-    "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+    "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
     "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
     "MINIO_ACCESS_KEY": "local-user", "MINIO_SECRET_KEY": "local-password",
     "SMTP_FROM": "noreply@example.test", "SESSION_SECRET": "test-session-secret",
@@ -19,6 +19,9 @@ os.environ.update({
 from app.api.assistant import AssistantRequest, query_assistant
 from app.assistant.service import AssistantService, AssistantUnavailable, TrustedAssistantContext
 from app.assistant.sql import SqlResult
+
+
+SESSION_DIGEST = "a" * 64
 
 
 class Provider:
@@ -31,7 +34,7 @@ class Provider:
 
 class AssistantContracts(unittest.TestCase):
     def setUp(self) -> None:
-        self.context = TrustedAssistantContext(uuid4(), uuid4(), "viewer")
+        self.context = TrustedAssistantContext(uuid4(), uuid4(), "viewer", SESSION_DIGEST)
 
     def test_document_and_relational_results_include_safe_provenance(self) -> None:
         documents = Mock()
@@ -55,9 +58,8 @@ class AssistantContracts(unittest.TestCase):
         self.assertNotIn("object_key", serialized)
         self.assertNotIn("experiments WHERE tenant_id", serialized)
         called = sql.execute.call_args.kwargs
-        self.assertEqual((called["user_id"], called["tenant_id"]), (self.context.user_id, self.context.tenant_id))
-        self.assertTrue(called["verifies_membership"](self.context.user_id, self.context.tenant_id))
-        self.assertFalse(called["verifies_membership"](self.context.user_id, uuid4()))
+        self.assertEqual(called["context"], self.context)
+        self.assertNotIn("verifies_membership", called)
 
     def test_auto_is_truthfully_partial_and_fails_closed_when_every_source_is_unavailable(self) -> None:
         documents, sql = Mock(), Mock()
@@ -87,7 +89,7 @@ class AssistantContracts(unittest.TestCase):
         user, tenant = uuid4(), uuid4()
         db, service = Mock(), Mock()
         service.answer.return_value = {"status": "complete"}
-        with (patch("app.api.assistant._session", return_value={"user_id": user}) as session,
+        with (patch("app.api.assistant._session", return_value={"user_id": user, "session_digest": SESSION_DIGEST}) as session,
               patch("app.api.assistant._tenant_context", return_value=tenant) as authorize,
               patch("app.api.assistant._service", return_value=service)):
             result = query_assistant(AssistantRequest(prompt="safe", mode="document"), "opaque", db)
@@ -97,6 +99,7 @@ class AssistantContracts(unittest.TestCase):
         self.assertEqual(authorize.call_args.args[2], {"admin", "member", "viewer"})
         context = service.answer.call_args.args[2]
         self.assertEqual((context.user_id, context.tenant_id), (user, tenant))
+        self.assertEqual(context.session_digest, SESSION_DIGEST)
 
 
 if __name__ == "__main__":

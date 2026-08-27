@@ -13,7 +13,7 @@ from sqlalchemy.sql import Select
 
 os.environ.update({
     "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-    "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+    "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
     "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
     "MINIO_ACCESS_KEY": "local-user", "MINIO_SECRET_KEY": "local-password",
     "SMTP_FROM": "noreply@example.test", "SESSION_SECRET": "test-session-secret",
@@ -21,6 +21,13 @@ os.environ.update({
 })
 
 from app.assistant.sql import SqlExecutionError, SqlExecutor, SqlGuard, SqlRejected
+
+
+class ProofContext:
+    def __init__(self, user_id=None, tenant_id=None, session_digest="a" * 64):
+        self.user_id = user_id or uuid4()
+        self.tenant_id = tenant_id or uuid4()
+        self.session_digest = session_digest
 
 
 class FakeResult:
@@ -64,21 +71,22 @@ class AssistantSqlTests(unittest.TestCase):
         for query in rejected:
             with self.subTest(query=query), self.assertRaises(SqlRejected): guard.validate(query)
 
-    def test_rejection_and_untrusted_membership_happen_before_data_access(self) -> None:
+    def test_rejection_and_missing_or_invalid_proof_happen_before_data_access(self) -> None:
         factory = Mock()
         executor = SqlExecutor(factory)
         with self.assertRaises(SqlRejected):
-            executor.execute("DELETE FROM experiments", user_id=uuid4(), tenant_id=uuid4(), verifies_membership=lambda *_: True)
+            executor.execute("DELETE FROM experiments", context=ProofContext())
         with self.assertRaises(PermissionError):
-            executor.execute("SELECT name FROM public.assistant_experiments", user_id=uuid4(), tenant_id=uuid4(), verifies_membership=lambda *_: False)
+            executor.execute("SELECT name FROM public.assistant_experiments", context=ProofContext(session_digest="invalid"))
         factory.assert_not_called()
 
     def test_executor_uses_allow_list_objects_and_structured_limit(self) -> None:
         guard = SqlGuard()
         session = FakeSession([{"name": "safe", "status": "done"}])
+        context = ProofContext()
         result = SqlExecutor(lambda: session, guard).execute(
             "SELECT name, status FROM public.assistant_experiments ORDER BY created_at desc",
-            user_id=uuid4(), tenant_id=uuid4(), verifies_membership=lambda *_: True,
+            context=context,
         )
         setup_statements = [str(statement) for statement, _ in session.executed[:-1]]
         statement = session.executed[-1][0]
@@ -88,6 +96,8 @@ class AssistantSqlTests(unittest.TestCase):
         self.assertEqual(result.rows, [{"name": "safe", "status": "done"}])
         self.assertIn("SET TRANSACTION READ ONLY", setup_statements[0])
         self.assertTrue(any("statement_timeout" in value for value in setup_statements))
+        self.assertTrue(any("app.session_proof" in value for value in setup_statements))
+        self.assertTrue(any("app.account_scope" in value for value in setup_statements))
         self.assertTrue(any("app.tenant_id" in value for value in setup_statements))
         self.assertIsInstance(statement, Select)
         self.assertIs(statement.get_final_froms()[0], relation)
@@ -106,11 +116,11 @@ class AssistantSqlTests(unittest.TestCase):
         with patch("app.assistant.sql.settings.sql_max_rows", 1):
             with self.assertRaises(SqlExecutionError):
                 SqlExecutor(lambda: FakeSession([{"id": 1}, {"id": 2}])).execute(
-                    "SELECT id FROM public.assistant_experiments", user_id=uuid4(), tenant_id=uuid4(), verifies_membership=lambda *_: True)
+                    "SELECT id FROM public.assistant_experiments", context=ProofContext())
         with patch("app.assistant.sql.settings.sql_max_result_bytes", 2):
             with self.assertRaises(SqlExecutionError):
                 SqlExecutor(lambda: FakeSession([{"name": "large"}])).execute(
-                    "SELECT name FROM public.assistant_experiments", user_id=uuid4(), tenant_id=uuid4(), verifies_membership=lambda *_: True)
+                    "SELECT name FROM public.assistant_experiments", context=ProofContext())
 
     def test_migration_uses_public_curated_views_with_least_privilege(self) -> None:
         migration = Path("migrations/versions/20260330_09_assistant_sql.py").read_text()

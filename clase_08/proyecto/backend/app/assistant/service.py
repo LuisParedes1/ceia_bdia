@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -29,6 +29,7 @@ class TrustedAssistantContext:
     user_id: UUID
     tenant_id: UUID
     role: str
+    session_digest: str = field(repr=False)
 
 
 class AssistantProvider(Protocol):
@@ -102,8 +103,8 @@ class AssistantService:
         if resolved in {"relational", "combined"}:
             try:
                 result = self.sql.execute(
-                    self.provider.plan_sql(prompt), user_id=context.user_id, tenant_id=context.tenant_id,
-                    verifies_membership=lambda user, tenant: user == context.user_id and tenant == context.tenant_id,
+                    self.provider.plan_sql(prompt),
+                    context=context,  # pyright: ignore[reportArgumentType] -- frozen dataclass satisfies the read-only proof protocol
                 )
                 rows = result.rows
                 provenance = {"query": result.query, "row_count": len(rows)}

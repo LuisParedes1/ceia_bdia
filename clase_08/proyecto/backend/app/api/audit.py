@@ -83,8 +83,8 @@ def list_audit_events(query: Annotated[AuditQuery, Query()], session_token: Anno
     tenant = _tenant_context(db, state, {"admin"})
     with db.begin():
         # pi-lens-ignore: python-sql-injection
-        db.execute(text("SELECT set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"),
-                   {"user": str(state["user_id"]), "tenant": str(tenant)})
+        db.execute(text("SELECT set_config('app.session_proof', :proof, true), set_config('app.account_scope', 'tenant', true), set_config('app.user_id', :user, true), set_config('app.tenant_id', :tenant, true)"),
+                   {"proof": state["session_digest"], "user": str(state["user_id"]), "tenant": str(tenant)})
         from_at, to_at = query.from_at, query.to_at
         if from_at is None or to_at is None:
             raise HTTPException(status_code=422, detail="invalid date range")
