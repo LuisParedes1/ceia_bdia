@@ -99,6 +99,16 @@ docker compose --profile admin-tools run --rm -T -v "$PWD/scripts/seed-security-
 
 El comando se documenta en una sola línea para evitar que espacios accidentales después de `\` rompan la continuación en Bash.
 
+### Documentos de demostración para el asistente RAG
+
+Además del fixture de seguridad, `scripts/seed-tenant-documents.py` carga documentos reales (Markdown) para poder probar el asistente documental desde el día 1: los ocho resúmenes de clase (`scripts/fixtures/documents/shared/`, iguales en ambos tenants) y un reporte de entrenamiento propio por tenant (`.../alpha/` visión por computadora, `.../beta/` NLP). A diferencia del fixture de seguridad —que usa un embedding sintético solo para probar aislamiento—, este script pide embeddings reales al servicio `embeddings-api`, así que las búsquedas semánticas devuelven resultados con sentido. Correlo una vez que el stack completo esté arriba (después de `docker compose up -d`) y con los tenants ya sembrados:
+
+```bash
+docker compose --profile admin-tools run --rm -T -v "$PWD/scripts/seed-tenant-documents.py:/app/seed-tenant-documents.py:ro" -v "$PWD/scripts/fixtures:/app/fixtures:ro" admin-tools python /app/seed-tenant-documents.py
+```
+
+Es repetible: vuelve a dejar cada documento en estado `ready` y reemplaza sus fragmentos y embeddings sin duplicarlos.
+
 El script exige las siete variables de fixture, seis correos normalizados distintos que pasen la validación del backend y una contraseña de al menos 8 caracteres; no imprime sus valores, tokens ni cookies. Para probar un login, abrí la aplicación y escribí el valor local de una de las seis variables de identidad (`ALPHA_ADMIN_EMAIL`, `ALPHA_MEMBER_EMAIL`, `ALPHA_VIEWER_EMAIL`, `BETA_ADMIN_EMAIL`, `BETA_MEMBER_EMAIL` o `BETA_VIEWER_EMAIL`) junto con `FIXTURE_PASSWORD`, sin copiarlos a comandos, documentación ni capturas. Luego ejecutá la verificación integral:
 
 ```bash

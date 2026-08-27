@@ -141,6 +141,8 @@ services:
       FIXTURE_PASSWORD: ${FIXTURE_PASSWORD}
       PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
       PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-}
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-intfloat/multilingual-e5-small}
+      EMBEDDINGS_API_URL: http://embeddings-api:8000
     volumes:
       - .:/workspace:ro
     depends_on:
