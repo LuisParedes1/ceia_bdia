@@ -94,7 +94,7 @@ Los seis correos de fixture deben ser distintos después de normalizarlos y debe
 El fixture es repetible y crea datos aislados para dos espacios de demostración (`alpha` y `beta`) con roles `admin`, `member` y `viewer`. Toma las siete credenciales sintéticas ya definidas en `.env`: `ALPHA_ADMIN_EMAIL`, `ALPHA_MEMBER_EMAIL`, `ALPHA_VIEWER_EMAIL`, `BETA_ADMIN_EMAIL`, `BETA_MEMBER_EMAIL`, `BETA_VIEWER_EMAIL` y `FIXTURE_PASSWORD`. Cada tenant usa exclusivamente sus tres variables de correo; las seis identidades comparten `FIXTURE_PASSWORD`.
 
 ```bash
-docker compose run --rm -T -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-security-fixtures.py:ro" api python /app/seed-security-fixtures.py
+docker compose --profile admin-tools run --rm -T -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-security-fixtures.py:ro" admin-tools python /app/seed-security-fixtures.py
 ```
 
 El comando se documenta en una sola línea para evitar que espacios accidentales después de `\` rompan la continuación en Bash.
