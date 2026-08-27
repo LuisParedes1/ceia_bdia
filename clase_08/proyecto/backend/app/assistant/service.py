@@ -64,7 +64,7 @@ class DocumentRetriever:
     def retrieve(self, prompt: str, context: TrustedAssistantContext, limit: int = 5) -> list[dict[str, Any]]:
         vector = embedding_provider.embed(prompt)
         with self._db.begin():
-            _set_context(self._db, {"user_id": context.user_id}, context.tenant_id)
+            _set_context(self._db, {"user_id": context.user_id, "session_digest": context.session_digest}, context.tenant_id)
             rows = self._db.execute(_retrieval_statement(vector, context.tenant_id, limit)).mappings().all()
         return [
             {

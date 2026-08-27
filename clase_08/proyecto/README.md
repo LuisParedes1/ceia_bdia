@@ -53,13 +53,12 @@ Ejecutá todo este bloque desde la raíz del repositorio:
 cd clase_08/proyecto
 cp .env.example .env
 docker compose config --quiet
-docker compose build
-docker compose up -d db minio minio-init mailpit
-docker compose --profile admin-tools run --rm admin-tools alembic upgrade head
-docker compose up -d
+docker compose up --build -d
 docker compose ps
 curl -fsS http://localhost:8000/health
 ```
+
+El inicio ejecuta primero `demo-bootstrap`: aplica las migraciones, crea los dos tenants de demostración y carga sus documentos con embeddings reales. La API espera a que termine correctamente, por lo que el asistente queda listo para consultar experimentos y documentos desde el primer ingreso.
 
 Antes de iniciar, reemplazá en `.env` los secretos de desarrollo de ejemplo por valores locales propios. Las seis claves siguientes son credenciales **sintéticas de aula**, no cuentas personales ni credenciales de producción:
 
@@ -101,7 +100,9 @@ El comando se documenta en una sola línea para evitar que espacios accidentales
 
 ### Documentos de demostración para el asistente RAG
 
-Además del fixture de seguridad, `scripts/seed-tenant-documents.py` carga documentos reales (Markdown) para poder probar el asistente documental desde el día 1: los ocho resúmenes de clase (`scripts/fixtures/documents/shared/`, iguales en ambos tenants) y un reporte de entrenamiento propio por tenant (`.../alpha/` visión por computadora, `.../beta/` NLP). A diferencia del fixture de seguridad —que usa un embedding sintético solo para probar aislamiento—, este script pide embeddings reales al servicio `embeddings-api`, así que las búsquedas semánticas devuelven resultados con sentido. Correlo una vez que el stack completo esté arriba (después de `docker compose up -d`) y con los tenants ya sembrados:
+El arranque normal carga documentos reales (Markdown) para poder probar el asistente documental desde el día 1: los ocho resúmenes de clase (`scripts/fixtures/documents/shared/`, iguales en ambos tenants) y un reporte de entrenamiento propio por tenant (`.../alpha/` visión por computadora, `.../beta/` NLP). `scripts/seed-tenant-documents.py` pide embeddings reales al servicio `embeddings-api`, así que las búsquedas semánticas devuelven resultados con sentido.
+
+Si modificás los documentos de ejemplo y querés recargarlos sin reconstruir todo el stack, ejecutá:
 
 ```bash
 docker compose --profile admin-tools run --rm -T -v "$PWD/scripts/seed-tenant-documents.py:/app/seed-tenant-documents.py:ro" -v "$PWD/scripts/fixtures:/app/fixtures:ro" admin-tools python /app/seed-tenant-documents.py

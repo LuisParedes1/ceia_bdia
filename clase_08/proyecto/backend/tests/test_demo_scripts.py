@@ -116,6 +116,25 @@ class DemoScriptTests(unittest.TestCase):
         self.assertNotIn("${ADMIN_EMAIL}", pgadmin_environment)
         self.assertNotIn("${FIXTURE_PASSWORD}", pgadmin_environment)
 
+    def test_compose_bootstraps_queryable_tenant_documents_before_api_start(self) -> None:
+        source = (PROJECT / "compose.yaml").read_text(encoding="utf-8")
+        bootstrap = source.split("\n  demo-bootstrap:\n", 1)[1].split("\n  db-role-reconcile:", 1)[0]
+        api = source.split("\n  api:\n", 1)[1].split("\n  db:", 1)[0]
+
+        self.assertIn('restart: "no"', bootstrap)
+        self.assertNotIn("profiles:", bootstrap)
+        self.assertIn("MIGRATOR_DATABASE_URL", bootstrap)
+        self.assertIn("MINIO_ENDPOINT: minio:9000", bootstrap)
+        self.assertIn("EMBEDDINGS_API_URL: http://embeddings-api:8000", bootstrap)
+        self.assertIn(".:/workspace:ro", bootstrap)
+        self.assertIn("alembic upgrade head", bootstrap)
+        self.assertIn("python /workspace/scripts/seed-security-fixtures.py", bootstrap)
+        self.assertIn("python /workspace/scripts/seed-tenant-documents.py", bootstrap)
+        for dependency in ("db", "minio-init", "embeddings-api"):
+            self.assertIn(f"{dependency}:", bootstrap)
+        self.assertIn("demo-bootstrap:", api)
+        self.assertIn("condition: service_completed_successfully", api)
+
     def test_verifier_maps_required_proofs_to_executable_checks(self) -> None:
         source = (SCRIPTS / "verify-stack.sh").read_text(encoding="utf-8")
         for marker in (
