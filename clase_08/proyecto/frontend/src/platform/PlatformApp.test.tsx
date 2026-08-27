@@ -84,6 +84,9 @@ describe("PlatformApp — access control", () => {
     expect(
       screen.getByText(/acceso exclusivo para administradores de plataforma/i),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /volver al inicio/i }),
+    ).toHaveAttribute("href", "http://localhost:4321");
   });
 
   it("shows a denial/error message instead of tenant data when the summary call fails after login", async () => {

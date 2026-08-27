@@ -23,6 +23,7 @@ import {
   ShieldOff,
 } from "lucide-react";
 import * as api from "../api";
+import { LANDING_URL } from "../config/publicUrls";
 import { Button } from "../components/ui/button";
 import { Field, FieldGroup } from "../components/ui/field";
 import { ConfirmDialog } from "../components/custom/ConfirmDialog";
@@ -197,6 +198,9 @@ function PlatformLoginPage() {
   return (
     <div className="auth">
       <div className="auth-panel">
+        <a href={LANDING_URL} className="muted">
+          ← Volver al inicio
+        </a>
         <form className="card" noValidate onSubmit={submit}>
           <div className="auth-heading">
             <p className="auth-brand">Administración de plataforma</p>
