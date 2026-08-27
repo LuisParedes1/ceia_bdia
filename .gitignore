@@ -40,3 +40,6 @@ exports/
 
 # Material de desarrollo de las clases
 material_desarrollo/
+
+# Artefactos locales de planificación OpenSpec
+/openspec/
