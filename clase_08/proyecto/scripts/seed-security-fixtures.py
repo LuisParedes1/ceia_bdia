@@ -12,8 +12,8 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from minio import Minio  # pyright: ignore[reportMissingImports] -- provided by the API runtime
-from sqlalchemy import create_engine, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import create_engine, text  # pyright: ignore[reportMissingImports] -- provided by the API runtime
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # pyright: ignore[reportMissingImports] -- provided by the API runtime
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_DIR / "backend"))
@@ -27,25 +27,39 @@ PREFIX = "https://example.test/gentle-ai/demo/"
 ROLES = ("admin", "member", "viewer")
 TENANTS = (("alpha", "Alpha Research Lab"), ("beta", "Beta Evaluation Lab"))
 DASHBOARD_DAYS = 91
-EMAIL_VARIABLES = {
-    "admin": "ADMIN_EMAIL",
-    "member": "MEMBER_EMAIL",
-    "viewer": "VIEWER_EMAIL",
+FIXTURE_EMAIL_VARIABLES = {
+    "alpha": {
+        "admin": "ALPHA_ADMIN_EMAIL",
+        "member": "ALPHA_MEMBER_EMAIL",
+        "viewer": "ALPHA_VIEWER_EMAIL",
+    },
+    "beta": {
+        "admin": "BETA_ADMIN_EMAIL",
+        "member": "BETA_MEMBER_EMAIL",
+        "viewer": "BETA_VIEWER_EMAIL",
+    },
 }
 
 
-def load_fixture_credentials() -> tuple[dict[str, str], str]:
-    from email_validator import EmailNotValidError, validate_email
+def load_fixture_credentials() -> tuple[dict[str, dict[str, str]], str]:
+    from email_validator import EmailNotValidError, validate_email  # pyright: ignore[reportMissingImports] -- provided by the API runtime
 
-    missing = [name for name in (*EMAIL_VARIABLES.values(), "FIXTURE_PASSWORD") if not os.environ.get(name)]
+    email_variables = [
+        (tenant, role, name)
+        for tenant, roles in FIXTURE_EMAIL_VARIABLES.items()
+        for role, name in roles.items()
+    ]
+    missing = [name for _, _, name in email_variables if not os.environ.get(name)]
+    if not os.environ.get("FIXTURE_PASSWORD"):
+        missing.append("FIXTURE_PASSWORD")
     if missing:
         raise SystemExit("Required fixture environment variables are missing: " + ", ".join(missing))
 
-    emails: dict[str, str] = {}
+    emails: dict[str, dict[str, str]] = {tenant: {} for tenant in FIXTURE_EMAIL_VARIABLES}
     invalid: list[str] = []
-    for role, name in EMAIL_VARIABLES.items():
+    for tenant, role, name in email_variables:
         try:
-            emails[role] = validate_email(
+            emails[tenant][role] = validate_email(
                 os.environ[name].strip(), check_deliverability=False
             ).normalized
         except EmailNotValidError:
@@ -53,10 +67,11 @@ def load_fixture_credentials() -> tuple[dict[str, str], str]:
     if invalid:
         raise SystemExit("Invalid fixture email variables: " + ", ".join(invalid))
 
+    normalized_emails = [emails[tenant][role] for tenant, role, _ in email_variables]
     duplicate_names = [
         name
-        for role, name in EMAIL_VARIABLES.items()
-        if list(emails.values()).count(emails[role]) > 1
+        for tenant, role, name in email_variables
+        if normalized_emails.count(emails[tenant][role]) > 1
     ]
     if duplicate_names:
         raise SystemExit("Fixture email variables must be distinct: " + ", ".join(duplicate_names))
@@ -71,8 +86,43 @@ def fixture_id(value: str) -> UUID:
     return uuid5(NAMESPACE_URL, PREFIX + value)
 
 
+def seed_fixture_chunk_and_embedding(
+    connection,
+    tenant_id: UUID,
+    document_id: UUID,
+    chunk_id: UUID,
+    embedding_id: UUID,
+    content: str,
+    embedding: str,
+) -> None:
+    """Replace only this fixture document's vector rows with deterministic IDs."""
+    document_params = {"tenant": tenant_id, "document": document_id}
+    connection.execute(
+        text("""DELETE FROM embeddings USING chunks
+            WHERE embeddings.tenant_id = :tenant
+              AND chunks.tenant_id = :tenant
+              AND chunks.document_id = :document
+              AND embeddings.chunk_id = chunks.id"""),
+        document_params,
+    )
+    connection.execute(
+        text("DELETE FROM chunks WHERE tenant_id = :tenant AND document_id = :document"),
+        document_params,
+    )
+    connection.execute(
+        text("""INSERT INTO chunks(id,tenant_id,document_id,content,ordinal,active)
+            VALUES (:id,:tenant,:document,:content,0,true)"""),
+        document_params | {"id": chunk_id, "content": content},
+    )
+    connection.execute(
+        text("""INSERT INTO embeddings(id,tenant_id,chunk_id,embedding)
+            VALUES (:id,:tenant,:chunk,CAST(:embedding AS vector))"""),
+        {"id": embedding_id, "tenant": tenant_id, "chunk": chunk_id, "embedding": embedding},
+    )
+
+
 def seed() -> None:
-    alpha_emails, password = load_fixture_credentials()
+    fixture_emails, password = load_fixture_credentials()
     objects: list[tuple[str, bytes]] = []
     engine = create_engine(settings.migrator_database_url)
     embedder = FixedEmbeddingProvider(384)
@@ -89,9 +139,7 @@ def seed() -> None:
             data = content.encode()
             object_key = f"{tenant_id.hex}/demo-security-fixture.txt"
             objects.append((object_key, data))
-            tenant_emails = alpha_emails if slug == "alpha" else {
-                role: f"demo-beta-{role}@example.test" for role in ROLES
-            }
+            tenant_emails = fixture_emails[slug]
 
             with connection.begin():
                 connection.execute(text("SET ROLE project_owner"))
@@ -148,8 +196,15 @@ def seed() -> None:
                 connection.execute(text("""INSERT INTO documents(id,tenant_id,created_by,name,object_key,ingestion_status,content_type,size_bytes,sha256)
                     VALUES (:id,:tenant,:user,'demo-security-fixture.txt',:key,'ready','text/plain',:size,:digest) ON CONFLICT DO NOTHING"""),
                     {"id": document_id, "tenant": tenant_id, "user": users["member"], "key": object_key, "size": len(data), "digest": sha256(data).hexdigest()})
-                connection.execute(text("INSERT INTO chunks(id,tenant_id,document_id,content,ordinal,active) VALUES (:id,:tenant,:document,:content,0,true) ON CONFLICT DO NOTHING"), {"id": chunk_id, "tenant": tenant_id, "document": document_id, "content": content})
-                connection.execute(text("INSERT INTO embeddings(id,tenant_id,chunk_id,embedding) VALUES (:id,:tenant,:chunk,CAST(:embedding AS vector)) ON CONFLICT DO NOTHING"), {"id": fixture_id(f"tenant/{slug}/embedding"), "tenant": tenant_id, "chunk": chunk_id, "embedding": str(embedder.embed(content, "passage"))})
+                seed_fixture_chunk_and_embedding(
+                    connection=connection,
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    chunk_id=chunk_id,
+                    embedding_id=fixture_id(f"tenant/{slug}/embedding"),
+                    content=content,
+                    embedding=str(embedder.embed(content, "passage")),
+                )
 
     client = Minio(settings.minio_endpoint, settings.minio_access_key, settings.minio_secret_key, secure=False)
     for object_key, data in objects:

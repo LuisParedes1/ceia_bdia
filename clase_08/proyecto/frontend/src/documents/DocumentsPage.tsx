@@ -491,36 +491,38 @@ export function DocumentsPage({ canMutate }: { canMutate: boolean }) {
                       {document.content_type ?? "—"} ·{" "}
                       {sizeLabel(document.size_bytes)}
                     </span>
-                    <RowActions
-                      actions={[
-                        {
-                          label: "Ver información del documento",
-                          icon: Info,
-                          onClick: () => setSelected(document),
-                        },
-                        {
-                          label: "Descargar documento",
-                          icon: Download,
-                          onClick: () => void download(document),
-                          disabled: busy === document.id,
-                        },
-                        ...(canMutate
-                          ? [
-                              {
-                                label:
-                                  document.ingestion_status === "ready"
-                                    ? "Reprocesar documento"
-                                    : "Ingerir documento",
-                                icon: RefreshCw,
-                                onClick: () => void ingest(document),
-                                disabled:
-                                  document.ingestion_status === "processing",
-                                busy: busy === document.id,
-                              },
-                            ]
-                          : []),
-                      ]}
-                    />
+                    <footer>
+                      <RowActions
+                        actions={[
+                          {
+                            label: "Ver información del documento",
+                            icon: Info,
+                            onClick: () => setSelected(document),
+                          },
+                          {
+                            label: "Descargar documento",
+                            icon: Download,
+                            onClick: () => void download(document),
+                            disabled: busy === document.id,
+                          },
+                          ...(canMutate
+                            ? [
+                                {
+                                  label:
+                                    document.ingestion_status === "ready"
+                                      ? "Reprocesar documento"
+                                      : "Ingerir documento",
+                                  icon: RefreshCw,
+                                  onClick: () => void ingest(document),
+                                  disabled:
+                                    document.ingestion_status === "processing",
+                                  busy: busy === document.id,
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
+                    </footer>
                   </article>
                 ))}
               </div>

@@ -556,7 +556,7 @@ export function UsersPage({
         {canManage && (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
-            Agregar persona
+            Nuevo
           </Button>
         )}
       </div>

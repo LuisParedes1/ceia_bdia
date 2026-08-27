@@ -56,6 +56,25 @@ describe("public landing contract", () => {
     );
   });
 
+  it("keeps the mobile header controls tappable and exposes login only from its collapsed navigation", () => {
+    const html = page();
+    const styles = css();
+
+    expect(html).toContain('class="mobile-menu"');
+    expect(html).toContain('class="menu-icon" aria-hidden="true"');
+    expect(html).toContain(
+      '<a class="mobile-login-button" href={`${appUrl}/login`}>Acceder al sistema</a>',
+    );
+    expect(styles).toMatch(
+      /@media\(max-width:560px\)\{[\s\S]*?\.nav-action \.nav-login-button\{display:none\}/,
+    );
+    expect(styles).toMatch(
+      /\.mobile-menu summary\s*\{[^}]*width:2\.75rem[^}]*height:2\.75rem/s,
+    );
+    expect(styles).toMatch(/\.menu-icon\s*\{[^}]*display:grid[^}]*gap:/s);
+    expect(styles).toMatch(/\.menu-icon span\s*\{[^}]*height:2px/s);
+  });
+
   it("initializes a persisted system-aware theme before paint and exposes its accessible toggle state", () => {
     expect(layout()).toContain("localStorage.getItem(key)");
     expect(layout()).toContain("prefers-color-scheme: dark");
@@ -77,7 +96,14 @@ describe("public landing contract", () => {
       "try { return localStorage.getItem(key); } catch",
     );
     expect(page()).toContain("try { localStorage.setItem(key, theme); } catch");
-    expect(page()).toContain("data-theme-toggle-mobile");
+    expect(page()).not.toContain("data-theme-toggle-mobile");
+    expect(page().match(/data-theme-toggle(?=[\s>])/g)).toHaveLength(1);
+    expect(page()).toContain(
+      '<div class="nav nav-action"><button class="theme" type="button" aria-label="Activar tema oscuro" aria-pressed="false" data-theme-toggle>',
+    );
+    expect(page()).toContain(
+      '<a class="mobile-login-button" href={`${appUrl}/login`}>Acceder al sistema</a>',
+    );
     expect(page()).toContain("<script is:inline>const key");
     expect(page()).not.toContain("<script is:inline>{`");
   });

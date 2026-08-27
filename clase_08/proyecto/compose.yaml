@@ -54,9 +54,12 @@ services:
     build: ./backend
     environment:
       APP_ENV: ${APP_ENV:-development}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      MEMBER_EMAIL: ${MEMBER_EMAIL}
-      VIEWER_EMAIL: ${VIEWER_EMAIL}
+      ALPHA_ADMIN_EMAIL: ${ALPHA_ADMIN_EMAIL}
+      ALPHA_MEMBER_EMAIL: ${ALPHA_MEMBER_EMAIL}
+      ALPHA_VIEWER_EMAIL: ${ALPHA_VIEWER_EMAIL}
+      BETA_ADMIN_EMAIL: ${BETA_ADMIN_EMAIL}
+      BETA_MEMBER_EMAIL: ${BETA_MEMBER_EMAIL}
+      BETA_VIEWER_EMAIL: ${BETA_VIEWER_EMAIL}
       FIXTURE_PASSWORD: ${FIXTURE_PASSWORD}
       RUNTIME_DATABASE_URL: postgresql+psycopg://app_runtime:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project
       MIGRATOR_DATABASE_URL: postgresql+psycopg://project_migrator:${POSTGRES_PASSWORD:-change-me-before-use}@db:5432/student_project

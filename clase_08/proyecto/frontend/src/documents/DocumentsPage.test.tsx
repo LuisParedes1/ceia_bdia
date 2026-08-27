@@ -124,6 +124,13 @@ describe("DocumentsPage", () => {
       expect(button.closest(".row-actions")).toBeInTheDocument();
       expect(button.querySelector("svg")).toBeInTheDocument();
     }
+    const documentCard = screen
+      .getAllByText("guia.md")
+      .find((element) => element.closest(".document-card"))
+      ?.closest(".document-card");
+    expect(
+      documentCard?.querySelector("footer > .row-actions"),
+    ).toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Ver información del documento" }),
     ).not.toHaveLength(0);

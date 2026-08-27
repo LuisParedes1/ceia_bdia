@@ -498,7 +498,7 @@ export function ExperimentsPage({ canMutate }: { canMutate: boolean }) {
         {canMutate && (
           <Button onClick={() => setCreating(true)}>
             <Plus />
-            Crear experimento
+            Nuevo
           </Button>
         )}
       </div>

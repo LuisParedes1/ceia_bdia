@@ -67,12 +67,15 @@ Antes de iniciar, reemplazá en `.env` los secretos de desarrollo de ejemplo por
 | --- | --- |
 | `PGADMIN_DEFAULT_EMAIL` | Usuario exclusivo para el acceso local a pgAdmin. |
 | `PGADMIN_DEFAULT_PASSWORD` | Contraseña exclusiva para el acceso local a pgAdmin. |
-| `ADMIN_EMAIL` | Identidad `admin` del tenant `alpha`. |
-| `MEMBER_EMAIL` | Identidad `member` del tenant `alpha`. |
-| `VIEWER_EMAIL` | Identidad `viewer` del tenant `alpha`. |
+| `ALPHA_ADMIN_EMAIL` | Identidad `admin` del tenant `alpha`. |
+| `ALPHA_MEMBER_EMAIL` | Identidad `member` del tenant `alpha`. |
+| `ALPHA_VIEWER_EMAIL` | Identidad `viewer` del tenant `alpha`. |
+| `BETA_ADMIN_EMAIL` | Identidad `admin` del tenant `beta`. |
+| `BETA_MEMBER_EMAIL` | Identidad `member` del tenant `beta`. |
+| `BETA_VIEWER_EMAIL` | Identidad `viewer` del tenant `beta`. |
 | `FIXTURE_PASSWORD` | Contraseña común de las seis identidades sembradas; mínimo 8 caracteres. |
 
-Los tres correos de fixture deben ser distintos después de normalizarlos y deben pasar la misma validación de correo que aplica el backend al login; usá dominios válidos para las identidades sintéticas de aula. No publiques `.env`, estas credenciales, cookies, códigos de recuperación ni salida que los contenga. Si modificás `API_PORT`, usá ese puerto en `curl`; si cambiás URLs públicas o puertos, reconstruí `web` y `landing` porque se incorporan durante el build.
+Los seis correos de fixture deben ser distintos después de normalizarlos y deben pasar la misma validación de correo que aplica el backend al login; usá dominios válidos para las identidades sintéticas de aula. No publiques `.env`, estas credenciales, cookies, códigos de recuperación ni salida que los contenga. Si modificás `API_PORT`, usá ese puerto en `curl`; si cambiás URLs públicas o puertos, reconstruí `web` y `landing` porque se incorporan durante el build.
 
 ### Direcciones predeterminadas
 
@@ -88,7 +91,7 @@ Los tres correos de fixture deben ser distintos después de normalizarlos y debe
 
 ## Fixtures y verificación completa
 
-El fixture es repetible y crea datos aislados para dos espacios de demostración (`alpha` y `beta`) con roles `admin`, `member` y `viewer`. Toma las cuatro credenciales sintéticas ya definidas en `.env`; `alpha` usa los correos `ADMIN_EMAIL`, `MEMBER_EMAIL` y `VIEWER_EMAIL`, mientras que `beta` conserva identidades demo deterministas. Todas usan `FIXTURE_PASSWORD`.
+El fixture es repetible y crea datos aislados para dos espacios de demostración (`alpha` y `beta`) con roles `admin`, `member` y `viewer`. Toma las siete credenciales sintéticas ya definidas en `.env`: `ALPHA_ADMIN_EMAIL`, `ALPHA_MEMBER_EMAIL`, `ALPHA_VIEWER_EMAIL`, `BETA_ADMIN_EMAIL`, `BETA_MEMBER_EMAIL`, `BETA_VIEWER_EMAIL` y `FIXTURE_PASSWORD`. Cada tenant usa exclusivamente sus tres variables de correo; las seis identidades comparten `FIXTURE_PASSWORD`.
 
 ```bash
 docker compose run --rm -T -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-security-fixtures.py:ro" api python /app/seed-security-fixtures.py
@@ -96,7 +99,7 @@ docker compose run --rm -T -v "$PWD/scripts/seed-security-fixtures.py:/app/seed-
 
 El comando se documenta en una sola línea para evitar que espacios accidentales después de `\` rompan la continuación en Bash.
 
-El script exige las cuatro variables de fixture, correos normalizados distintos que pasen la validación del backend y una contraseña de al menos 8 caracteres; no imprime sus valores, tokens ni cookies. Para probar el login del tenant `alpha`, abrí la aplicación y escribí el valor local de `ADMIN_EMAIL`, `MEMBER_EMAIL` o `VIEWER_EMAIL` junto con `FIXTURE_PASSWORD`, sin copiarlos a comandos, documentación ni capturas. Luego ejecutá la verificación integral:
+El script exige las siete variables de fixture, seis correos normalizados distintos que pasen la validación del backend y una contraseña de al menos 8 caracteres; no imprime sus valores, tokens ni cookies. Para probar un login, abrí la aplicación y escribí el valor local de una de las seis variables de identidad (`ALPHA_ADMIN_EMAIL`, `ALPHA_MEMBER_EMAIL`, `ALPHA_VIEWER_EMAIL`, `BETA_ADMIN_EMAIL`, `BETA_MEMBER_EMAIL` o `BETA_VIEWER_EMAIL`) junto con `FIXTURE_PASSWORD`, sin copiarlos a comandos, documentación ni capturas. Luego ejecutá la verificación integral:
 
 ```bash
 ./scripts/verify-stack.sh

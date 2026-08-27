@@ -102,7 +102,7 @@ describe("ExperimentsPage", () => {
       await screen.findByText(/Cuando el equipo cree uno/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Crear experimento/ }),
+      screen.queryByRole("button", { name: "Nuevo" }),
     ).not.toBeInTheDocument();
     view.unmount();
 
@@ -190,9 +190,7 @@ describe("ExperimentsPage", () => {
     vi.mocked(api.getExperiments).mockResolvedValue(page([]));
     vi.mocked(api.createExperiment).mockResolvedValue(experiment);
     renderPage(true);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Crear experimento" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo" }));
     fireEvent.change(screen.getByLabelText("Nombre del experimento"), {
       target: { value: "  Modelo nuevo  " },
     });

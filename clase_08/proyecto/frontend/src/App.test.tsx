@@ -448,7 +448,7 @@ describe("users directory", () => {
       screen.getByRole("dialog", { name: "Detalles de la persona" }),
     ).toHaveTextContent("Contraseña pendiente");
     fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
+    fireEvent.click(screen.getByRole("button", { name: "Nuevo" }));
     fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "invalido" },
     });
