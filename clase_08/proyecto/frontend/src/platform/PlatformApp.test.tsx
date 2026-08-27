@@ -189,4 +189,11 @@ describe("PlatformApp — authenticated navigation and content", () => {
     expect(platformLogin).toHaveBeenCalledWith("admin@platform.local", "super-secret");
     expect(await screen.findByRole("heading", { name: "Resumen de plataforma" })).toBeInTheDocument();
   });
+
+  it("cross-links back to the tenant login screen from the platform login", async () => {
+    vi.mocked(getPlatformSummary).mockRejectedValueOnce(new Error("Platform access denied."));
+    renderAt("/platform/login");
+    const tenantLink = await screen.findByRole("link", { name: /entrá acá/i });
+    expect(tenantLink).toHaveAttribute("href", "/login");
+  });
 });

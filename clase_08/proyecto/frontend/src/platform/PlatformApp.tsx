@@ -239,6 +239,10 @@ function PlatformLoginPage() {
               </p>
             )}
           </FieldGroup>
+          <p className="muted platform-cross-link">
+            ¿Sos usuario de un espacio de trabajo?{" "}
+            <Link to="/login">Entrá acá →</Link>
+          </p>
         </form>
       </div>
     </div>

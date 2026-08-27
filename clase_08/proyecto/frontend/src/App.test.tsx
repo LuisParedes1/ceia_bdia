@@ -722,6 +722,27 @@ describe("auth presentation and theme", () => {
     expect(options.querySelectorAll("a")).toHaveLength(3);
   });
 
+  it("cross-links to the isolated platform login only from the tenant login screen", async () => {
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    renderAt("/login");
+    const platformLink = await screen.findByRole("link", {
+      name: /entrá acá/i,
+    });
+    expect(platformLink).toHaveAttribute("href", "/platform");
+    // Outside the "Opciones de acceso" nav — it must not inflate that group's link count.
+    expect(
+      screen.getByRole("navigation", { name: "Opciones de acceso" }),
+    ).not.toContainElement(platformLink);
+
+    cleanup();
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    renderAt("/register");
+    await screen.findByRole("heading", { name: "Crear espacio" });
+    expect(
+      screen.queryByRole("link", { name: /entrá acá/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the accessible theme toggle in the authenticated header", async () => {
     vi.mocked(getSession).mockResolvedValueOnce({
       user_id: "user",
@@ -877,7 +898,8 @@ describe("platform route separation", () => {
       await screen.findByText(/administración de plataforma/i),
     ).toBeInTheDocument();
     // Tenant chrome (workspace name/nav) never renders on the isolated platform route.
-    expect(screen.queryByText(/espacio de trabajo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Espacio de experimentos")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Espacio de trabajo:/)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: "Experimentos" }),
     ).not.toBeInTheDocument();

@@ -452,6 +452,12 @@ function AuthPage({ mode }: { mode: AuthMode }) {
             <Link to="/register">Crear una cuenta</Link>
             <Link to="/recovery">Recuperar contraseña</Link>
           </nav>
+          {mode === "login" && (
+            <p className="muted platform-cross-link">
+              ¿Sos administrador de plataforma?{" "}
+              <Link to="/platform">Entrá acá →</Link>
+            </p>
+          )}
         </form>
       </div>
     </div>
