@@ -13,7 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.assistant import router as assistant_router
 from app.api.auth import router as identity_router
+from app.api.experiments import router as experiments_router
+from app.api.dashboard import router as dashboard_router
+from app.api.audit import router as audit_router
+from app.api.platform import router as platform_router
+from app.documents import router as documents_router
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -29,6 +35,23 @@ _KNOWN_DETAILS = {
     "El código de recuperación no es válido o venció.",
     "El rol debe ser administración, integrante o consulta.",
     "La persona ya pertenece a otro espacio de trabajo.",
+    "Los datos de paginación no son válidos.",
+    "No se encontró el experimento.",
+    "La transición de estado no es válida.",
+    "El experimento debe estar en ejecución.",
+    "Document not found.",
+    "Only PDF, TXT, and MD uploads are accepted.",
+    "The upload is empty or exceeds the configured limit.",
+    "The PDF signature is invalid.",
+    "The text encoding is invalid.",
+    "Private object storage is unavailable.",
+    "Stored object integrity verification failed.",
+    "Document ingestion failed closed.",
+    "Embedding provider is unavailable.",
+    "El asistente no está disponible para esta consulta.",
+    "Invalid platform credentials.",
+    "Platform authentication required.",
+    "Platform access denied.",
 }
 _STATUS_DETAILS = {
     400: "La solicitud no es válida.",
@@ -71,7 +94,8 @@ def _status_detail(status_code: int) -> str:
 app = FastAPI(
     title=settings.project_name,
     lifespan=lifespan,
-    openapi_url=None if settings.app_env == "production" else "/api/openapi.json",
+    # pi-lens-ignore: generic-api-key
+    openapi_url=None if settings.app_env == "production" else "/api/openapi.json",  # gitleaks:allow -- public route, not a credential
     docs_url=None if settings.app_env == "production" else "/api/docs",
     redoc_url=None,
 )
@@ -84,6 +108,12 @@ app.add_middleware(
     allow_headers=["Accept", "Content-Type", "X-CSRF-Token"],
 )
 app.include_router(identity_router)
+app.include_router(platform_router)
+app.include_router(experiments_router)
+app.include_router(dashboard_router)
+app.include_router(audit_router)
+app.include_router(documents_router)
+app.include_router(assistant_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -110,4 +140,4 @@ async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
 @app.get("/health", tags=["operations"])
 def health_check() -> dict[str, str]:
     """Return the Compose health contract without depending on future services."""
-    return {"status": "ok", "service": "generic-student-api"}
+    return {"status": "ok", "service": "project-api"}

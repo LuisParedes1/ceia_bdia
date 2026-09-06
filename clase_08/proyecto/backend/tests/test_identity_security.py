@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 _ENVIRONMENT = {
     "RUNTIME_DATABASE_URL": "postgresql+psycopg://runtime:password@db/student_project",
-    "MIGRATOR_DATABASE_URL": "postgresql+psycopg://migrator:password@db/student_project",
+    "AUTH_DATABASE_URL": "postgresql+psycopg://auth:password@db/student_project",
     "ASSISTANT_DATABASE_URL": "postgresql+psycopg://assistant:password@db/student_project",
     "MINIO_ACCESS_KEY": "local-user",
     "MINIO_SECRET_KEY": "local-password",
@@ -67,7 +67,7 @@ class IdentitySecurityTests(unittest.TestCase):
             response = recovery_request(RecoveryRequest(email="known@example.com"), database)  # type: ignore[arg-type]
         self.assertEqual(response, {"message": "Si la cuenta existe, se enviaron las instrucciones de recuperación."})
         self.assertEqual(len(database.calls), 2)
-        self.assertIn("count(*)", database.calls[0][0])
+        self.assertIn("recovery_request_count", database.calls[0][0])
         send_recovery.assert_not_called()
 
     def test_invalid_email_payloads_are_rejected_before_identity_side_effects(self) -> None:

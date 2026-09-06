@@ -7,18 +7,17 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from app.core.config import settings
-from app.core.database import metadata
+from app.core.config import AdminToolSettings
 
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
-target_metadata = metadata
+target_metadata = None
 
 
 def migration_url() -> str:
-    return settings.migrator_database_url.replace(
+    return AdminToolSettings().migrator_database_url.replace(  # pyright: ignore[reportCallIssue] -- environment supplies migrator-only settings
         "postgresql+asyncpg://", "postgresql+psycopg://"
     )
 

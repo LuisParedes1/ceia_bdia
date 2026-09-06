@@ -25,6 +25,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import * as api from "./api";
@@ -36,6 +37,12 @@ import { ConfirmDialog } from "./components/custom/ConfirmDialog";
 import { PasswordInput } from "./components/custom/PasswordInput";
 import { ThemeProvider, ThemeToggle } from "./theme";
 import { UsersPage } from "./admin/UsersPage";
+import { ExperimentsPage } from "./experiments/ExperimentsPage";
+import { DocumentsPage } from "./documents/DocumentsPage";
+import { AssistantPage } from "./assistant/AssistantPage";
+import { DashboardPage } from "./dashboard/DashboardPage";
+import { AuditPage } from "./audit/AuditPage";
+import { PlatformApp } from "./platform/PlatformApp";
 
 type Auth = {
   session: Session | null;
@@ -103,6 +110,7 @@ const items = [
   { to: "/experiments", label: "Experimentos", icon: FlaskConical },
   { to: "/documents", label: "Documentos", icon: BookOpen },
   { to: "/assistant", label: "Asistente", icon: MessageSquare },
+  { to: "/audit", label: "Auditoría", icon: ShieldCheck },
 ];
 function MainLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -117,8 +125,9 @@ function MainLayout({ children }: { children: ReactNode }) {
           {items
             .filter(
               (item) =>
-                item.to !== "/users" ||
-                session?.capabilities.includes("members:manage"),
+                (item.to !== "/users" ||
+                  session?.capabilities.includes("members:manage")) &&
+                (item.to !== "/audit" || session?.role === "admin"),
             )
             .map(({ to, label, icon: Icon }) => (
               <Link
@@ -165,23 +174,6 @@ function MainLayout({ children }: { children: ReactNode }) {
         onConfirm={end}
       />
     </div>
-  );
-}
-function Page({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <>
-      <div className="page-header">
-        <div>
-          <h1>{title}</h1>
-          <p className="muted">Espacio de trabajo actual</p>
-        </div>
-      </div>
-      {children ?? (
-        <section className="notice">
-          <p>Esta sección estará disponible en la próxima entrega.</p>
-        </section>
-      )}
-    </>
   );
 }
 type AuthMode = "login" | "register" | "request" | "confirm";
@@ -460,6 +452,12 @@ function AuthPage({ mode }: { mode: AuthMode }) {
             <Link to="/register">Crear una cuenta</Link>
             <Link to="/recovery">Recuperar contraseña</Link>
           </nav>
+          {mode === "login" && (
+            <p className="muted platform-cross-link">
+              ¿Sos administrador de plataforma?{" "}
+              <Link to="/platform">Entrá acá →</Link>
+            </p>
+          )}
         </form>
       </div>
     </div>
@@ -470,12 +468,30 @@ function UsersRoute() {
   return (
     <UsersPage
       canManage={session?.capabilities.includes("members:manage") ?? false}
+      currentUserId={session?.user_id}
     />
   );
+}
+function AuditRoute() {
+  const { session } = useAuth();
+  return session?.role === "admin" ? (
+    <AuditPage />
+  ) : (
+    <Navigate to="/dashboard" replace />
+  );
+}
+function ExperimentsRoute() {
+  const { session } = useAuth();
+  return <ExperimentsPage canMutate={session?.role !== "viewer"} />;
+}
+function DocumentsRoute() {
+  const { session } = useAuth();
+  return <DocumentsPage canMutate={session?.role !== "viewer"} />;
 }
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/platform/*" element={<PlatformApp />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/recovery" element={<AuthPage mode="request" />} />
@@ -491,17 +507,12 @@ function AppRoutes() {
                   path="/"
                   element={<Navigate to="/dashboard" replace />}
                 />
-                <Route path="/dashboard" element={<Page title="Panel" />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/users" element={<UsersRoute />} />
-                <Route
-                  path="/experiments"
-                  element={<Page title="Experimentos" />}
-                />
-                <Route
-                  path="/documents"
-                  element={<Page title="Documentos" />}
-                />
-                <Route path="/assistant" element={<Page title="Asistente" />} />
+                <Route path="/experiments" element={<ExperimentsRoute />} />
+                <Route path="/documents" element={<DocumentsRoute />} />
+                <Route path="/assistant" element={<AssistantPage />} />
+                <Route path="/audit" element={<AuditRoute />} />
                 <Route
                   path="*"
                   element={<Navigate to="/dashboard" replace />}

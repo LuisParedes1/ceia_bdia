@@ -17,6 +17,7 @@ import {
   register,
   type Session,
   apiErrorMessage,
+  getPlatformSummary,
 } from "./api";
 
 vi.mock("./api", async (importOriginal) => ({
@@ -29,6 +30,9 @@ vi.mock("./api", async (importOriginal) => ({
   logout: vi.fn(),
   createMember: vi.fn(),
   getMembers: vi.fn(),
+  updateMember: vi.fn(),
+  getAuditEvents: vi.fn(),
+  getPlatformSummary: vi.fn(),
 }));
 afterEach(() => {
   cleanup();
@@ -170,18 +174,20 @@ describe("application routes", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    "/reset-password",
-    "/reset-password?token=",
-  ])("keeps %s on the confirmation form with a manual code fallback", async (path) => {
-    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
-    renderAt(path);
+  it.each(["/reset-password", "/reset-password?token="])(
+    "keeps %s on the confirmation form with a manual code fallback",
+    async (path) => {
+      vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+      renderAt(path);
 
-    expect(
-      await screen.findByRole("heading", { name: "Guardar contraseña" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Código de recuperación")).toBeInTheDocument();
-  });
+      expect(
+        await screen.findByRole("heading", { name: "Guardar contraseña" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Código de recuperación"),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("keeps an invalid linked-token API error on the confirmation form in Spanish", async () => {
     vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
@@ -285,17 +291,16 @@ describe("application routes", () => {
     expect(screen.getByRole("heading", { name: "Panel" })).toBeInTheDocument();
   });
 
-  it.each([
-    "/login",
-    "/register",
-    "/recovery",
-  ])("redirects authenticated users from %s to the dashboard", async (path) => {
-    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
-    renderAt(path);
-    expect(
-      await screen.findByRole("heading", { name: "Panel" }),
-    ).toBeInTheDocument();
-  });
+  it.each(["/login", "/register", "/recovery"])(
+    "redirects authenticated users from %s to the dashboard",
+    async (path) => {
+      vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+      renderAt(path);
+      expect(
+        await screen.findByRole("heading", { name: "Panel" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("keeps recovery confirmation available to authenticated users", async () => {
     vi.mocked(getSession).mockResolvedValueOnce(adminSession);
@@ -333,6 +338,43 @@ describe("application routes", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: "Personas" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the audit route and navigation only to administrators", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      per_page: 50,
+      pages: 1,
+    });
+    vi.mocked(apiClient.getAuditEvents).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      per_page: 25,
+      pages: 1,
+    });
+    renderAt("/audit");
+    expect(
+      await screen.findByRole("heading", { name: "Auditoría" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Auditoría" })).toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(getSession).mockResolvedValueOnce({
+      ...adminSession,
+      role: "member",
+      capabilities: [],
+    });
+    renderAt("/audit");
+    expect(
+      await screen.findByRole("heading", { name: "Panel" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Auditoría" }),
     ).not.toBeInTheDocument();
   });
 });
@@ -382,6 +424,9 @@ describe("users directory", () => {
     );
     expect(container.querySelector("table")).toBeInTheDocument();
     expect(container.querySelector(".member-cards")).toBeInTheDocument();
+    expect(
+      container.querySelector(".pagination-page-size > label + select"),
+    ).toBeInTheDocument();
   });
 
   it("uses URL filters, opens details, handles loading/error/retry, and creates a valid member", async () => {
@@ -405,7 +450,7 @@ describe("users directory", () => {
       screen.getByRole("dialog", { name: "Detalles de la persona" }),
     ).toHaveTextContent("Contraseña pendiente");
     fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Agregar persona" }));
+    fireEvent.click(screen.getByRole("button", { name: "Nuevo" }));
     fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "invalido" },
     });
@@ -427,6 +472,167 @@ describe("users directory", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Podrá establecer su contraseña desde recuperación.",
     );
+  });
+
+  it("disables self-deactivation", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers).mockResolvedValueOnce({
+      ...membersResponse,
+      items: [
+        {
+          ...membersResponse.items[0],
+          user_id: adminSession.user_id,
+        },
+      ],
+    });
+    renderAt("/users");
+
+    const deactivateButtons = await screen.findAllByRole("button", {
+      name: "Desactivar a ana@equipo.edu",
+    });
+    expect(deactivateButtons).toHaveLength(2);
+    deactivateButtons.forEach((button) => expect(button).toBeDisabled());
+  });
+
+  it("uses an ordered, spaced role-edit footer and protects role updates", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers)
+      .mockResolvedValueOnce(membersResponse)
+      .mockResolvedValueOnce({
+        ...membersResponse,
+        items: [{ ...membersResponse.items[0], role: "viewer" }],
+      });
+    vi.mocked(apiClient.updateMember).mockResolvedValueOnce({
+      membership_id: "member-1",
+      user_id: "member-1",
+      role: "viewer",
+      active: true,
+    });
+    renderAt("/users?page=2&per_page=20");
+
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", {
+          name: "Editar rol de ana@equipo.edu",
+        })
+      )[0],
+    );
+    const dialog = screen.getByRole("dialog", { name: "Editar rol" });
+    const footer = dialog.querySelector(".dialog-footer");
+    expect(footer).toHaveClass("dialog-footer");
+    expect(
+      Array.from(footer?.querySelectorAll("button") ?? []).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Cancelar", "Guardar cambios"]);
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveClass(
+      "button-outline",
+    );
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toHaveClass(
+      "button-primary",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Editar rol" }),
+    ).not.toBeInTheDocument();
+    expect(apiClient.updateMember).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "Editar rol de ana@equipo.edu",
+      })[0],
+    );
+    fireEvent.change(screen.getByLabelText("Rol"), {
+      target: { value: "viewer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    expect(apiClient.updateMember).toHaveBeenCalledWith("member-1", {
+      role: "viewer",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "El rol fue actualizado.",
+    );
+  });
+
+  it("confirms destructive deactivation and non-destructive reactivation before one guarded mutation", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(apiClient.getMembers)
+      .mockResolvedValueOnce(membersResponse)
+      .mockResolvedValueOnce({
+        ...membersResponse,
+        items: [{ ...membersResponse.items[0], status: "inactive" }],
+      });
+    vi.mocked(apiClient.updateMember)
+      .mockRejectedValueOnce(
+        new Error("El espacio debe conservar una administración."),
+      )
+      .mockResolvedValueOnce({
+        membership_id: "member-1",
+        user_id: "member-1",
+        role: "member",
+        active: true,
+      });
+    renderAt("/users");
+
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", {
+          name: "Desactivar a ana@equipo.edu",
+        })
+      )[0],
+    );
+    const deactivateDialog = screen.getByRole("alertdialog", {
+      name: "¿Querés desactivar a ana@equipo.edu?",
+    });
+    expect(deactivateDialog).toHaveTextContent(
+      "ana@equipo.edu dejará de tener acceso",
+    );
+    expect(screen.getByRole("button", { name: "Desactivar" })).toHaveClass(
+      "button-destructive",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(apiClient.updateMember).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El espacio debe conservar una administración.",
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Desactivar a ana@equipo.edu" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar" }));
+    const reactivate = (
+      await screen.findAllByRole("button", {
+        name: "Reactivar a ana@equipo.edu",
+      })
+    )[0];
+    fireEvent.click(reactivate);
+    const reactivateDialog = screen.getByRole("alertdialog", {
+      name: "¿Querés reactivar a ana@equipo.edu?",
+    });
+    expect(reactivateDialog).toHaveTextContent(
+      "ana@equipo.edu recuperará el acceso",
+    );
+    expect(screen.getByRole("button", { name: "Reactivar" })).toHaveClass(
+      "button-primary",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(apiClient.updateMember).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Reactivar a ana@equipo.edu" })[0],
+    );
+    const confirm = screen.getByRole("button", { name: "Reactivar" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(apiClient.updateMember).toHaveBeenLastCalledWith("member-1", {
+      active: true,
+    });
+    expect(apiClient.updateMember).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -457,15 +663,18 @@ describe("auth presentation and theme", () => {
     ["/register", "nombre@equipo.edu", "Mínimo 8 caracteres", "Crear espacio"],
     ["/recovery", "nombre@equipo.edu", null, "Enviar instrucciones"],
     ["/recovery/confirm", null, "Mínimo 8 caracteres", "Guardar contraseña"],
-  ])("uses the required %s labels and placeholders", async (path, email, password, submit) => {
-    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
-    renderAt(path);
-    if (email)
-      expect(await screen.findByPlaceholderText(email)).toBeInTheDocument();
-    if (password)
-      expect(screen.getByPlaceholderText(password)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
-  });
+  ])(
+    "uses the required %s labels and placeholders",
+    async (path, email, password, submit) => {
+      vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+      renderAt(path);
+      if (email)
+        expect(await screen.findByPlaceholderText(email)).toBeInTheDocument();
+      if (password)
+        expect(screen.getByPlaceholderText(password)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
+    },
+  );
 
   it("toggles each password field visibility independently and restores its masked type", async () => {
     vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
@@ -511,6 +720,27 @@ describe("auth presentation and theme", () => {
       name: "Opciones de acceso",
     });
     expect(options.querySelectorAll("a")).toHaveLength(3);
+  });
+
+  it("cross-links to the isolated platform login only from the tenant login screen", async () => {
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    renderAt("/login");
+    const platformLink = await screen.findByRole("link", {
+      name: /entrá acá/i,
+    });
+    expect(platformLink).toHaveAttribute("href", "/platform");
+    // Outside the "Opciones de acceso" nav — it must not inflate that group's link count.
+    expect(
+      screen.getByRole("navigation", { name: "Opciones de acceso" }),
+    ).not.toContainElement(platformLink);
+
+    cleanup();
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    renderAt("/register");
+    await screen.findByRole("heading", { name: "Crear espacio" });
+    expect(
+      screen.queryByRole("link", { name: /entrá acá/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the accessible theme toggle in the authenticated header", async () => {
@@ -654,5 +884,38 @@ describe("auth field-local validation", () => {
     expect(
       screen.queryByText("Ingresá tu contraseña."),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("platform route separation", () => {
+  it("routes /platform to the isolated platform surface instead of the tenant app", async () => {
+    vi.mocked(getSession).mockRejectedValueOnce(new Error("unauthenticated"));
+    vi.mocked(getPlatformSummary).mockRejectedValueOnce(
+      new Error("Platform access denied."),
+    );
+    renderAt("/platform/summary");
+    expect(
+      await screen.findByText(/administración de plataforma/i),
+    ).toBeInTheDocument();
+    // Tenant chrome (workspace name/nav) never renders on the isolated platform route.
+    expect(screen.queryByText("Espacio de experimentos")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Espacio de trabajo:/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Experimentos" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not let a tenant session grant access to the platform surface", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getPlatformSummary).mockRejectedValueOnce(
+      new Error("Platform access denied."),
+    );
+    renderAt("/platform/summary");
+    expect(
+      await screen.findByRole("heading", { name: "Ingresar" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/acceso exclusivo para administradores de plataforma/i),
+    ).toBeInTheDocument();
   });
 });
